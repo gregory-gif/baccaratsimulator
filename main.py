@@ -1,23 +1,11 @@
 from nicegui import ui
-# We will create ui/layout.py next, so we import it here
 from ui.layout import create_layout
+from ui.scorecard import Scorecard  # <--- Importing the file you just made
 
-# 1. APP CONFIGURATION
-# --------------------
-# Enable "Casino Night" mode (Dark Mode)
-ui.dark_mode().enable() 
-
-# 2. INITIALIZE THE INTERFACE
-# ---------------------------
+ui.dark_mode().enable()
 create_layout()
 
-# 3. RUN THE APP
-# --------------
-if __name__ in {"__main__", "__mp_main__"}:
-    ui.run(
-        title='Salle Blanche Lab', 
-        port=8080, 
-        reload=True, 
-        favicon='♠️',
-        show=True
-    )
+# Start the module
+Scorecard(tier_level=1) 
+
+ui.run(title='Salle Blanche Lab')
