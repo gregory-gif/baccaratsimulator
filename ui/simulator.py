@@ -165,7 +165,11 @@ def show_simulator():
                 btn_sim = ui.button('RUN SIMULATION', on_click=run_sim).props('icon=play_arrow color=green')
             
             label_stats = ui.label('Ready to test strategy...').classes('text-sm text-slate-500 mt-2')
-            progress = ui.linear_progress().props('indeterminate color=blue').classes('mt-2').set_visibility(False)
+            
+            # --- FIX APPLIED HERE ---
+            # Separated assignment from visibility setting to prevent 'NoneType' error
+            progress = ui.linear_progress().props('indeterminate color=blue').classes('mt-2')
+            progress.set_visibility(False)
 
         stats_container = ui.column().classes('w-full')
         chart_container = ui.card().classes('w-full bg-slate-900 p-4')
