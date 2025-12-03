@@ -68,6 +68,8 @@ def show_simulator():
             running = True
             btn_sim.disable()
             results = []
+            
+            # Reset UI
             progress.set_value(0)
             progress.set_visibility(True)
             label_stats.set_text("Initializing simulation...")
@@ -100,10 +102,10 @@ def show_simulator():
             label_stats.set_text("Simulation Complete")
 
         except Exception as e:
-            # ERROR TRAP: This will tell us what is wrong
+            # ERROR TRAP
             error_msg = str(e)
-            print(traceback.format_exc()) # Print to Render logs
-            ui.notify(f"Simulation Failed: {error_msg}", type='negative', close_button=True, timeout=None)
+            print(traceback.format_exc())
+            ui.notify(f"Simulation Failed: {error_msg}", type='negative', close_button=True)
             label_stats.set_text(f"Error: {error_msg}")
             
         finally:
@@ -166,8 +168,7 @@ def show_simulator():
             
             label_stats = ui.label('Ready to test strategy...').classes('text-sm text-slate-500 mt-2')
             
-            # --- FIX APPLIED HERE ---
-            # Separated assignment from visibility setting to prevent 'NoneType' error
+            # Initialize Progress Bar correctly to avoid NoneType error
             progress = ui.linear_progress().props('indeterminate color=blue').classes('mt-2')
             progress.set_visibility(False)
 
