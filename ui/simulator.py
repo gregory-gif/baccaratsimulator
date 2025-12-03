@@ -55,6 +55,15 @@ class SimulationWorker:
 
         return state.session_pnl, history
 
+    @staticmethod
+    def run_batch(tier: TierConfig, count: int):
+        """Helper to run multiple sessions in a single batch."""
+        batch_results = []
+        for _ in range(count):
+            pnl, _ = SimulationWorker.run_session(tier)
+            batch_results.append(pnl)
+        return batch_results
+
 def show_simulator():
     # UI STATE
     results = []
@@ -83,22 +92,25 @@ def show_simulator():
             tier = TIER_MAP[tier_level]
             
             # Execution
-            # FIX: Reduced chunk_size to 1 to prevent 'Connection Lost' on cloud
-            chunk_size = 1 
+            # Now we can increase chunk size because we are threading
+            chunk_size = 20
             
             for i in range(0, n_sessions, chunk_size):
-                # Run a batch
-                for _ in range(chunk_size):
-                    if len(results) >= n_sessions: break
-                    final_pnl, _ = SimulationWorker.run_session(tier)
-                    results.append(final_pnl)
+                # Calculate remaining
+                remaining = n_sessions - len(results)
+                current_batch_size = min(chunk_size, remaining)
+                
+                if current_batch_size <= 0: break
+
+                # CRITICAL FIX: Run the heavy math in a separate thread
+                # This prevents the "Connection Lost" error by freeing up the main loop
+                batch_results = await asyncio.to_thread(SimulationWorker.run_batch, tier, current_batch_size)
+                
+                results.extend(batch_results)
                     
                 # Update UI
                 progress.set_value(len(results) / n_sessions)
                 label_stats.set_text(f"Simulating... {len(results)}/{n_sessions}")
-                
-                # CRITICAL: Yield control to server to keep connection alive
-                await asyncio.sleep(0.001) 
                 
             # Finalize
             render_results(results, tier)
