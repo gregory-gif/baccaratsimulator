@@ -192,22 +192,3 @@ class Scorecard:
 def show_scorecard():
     # Helper to clear content and show this view
     Scorecard()
-```
-
-### Final Check on `main.py`
-You also need to make a tiny change to `main.py`. Previously, we were forcing `Scorecard(tier_level=1)`. Now, the scorecard is smart enough to find the tier itself, so we remove the argument.
-
-**Update `main.py` to:**
-```python
-from nicegui import ui
-from ui.layout import create_layout
-from ui.scorecard import Scorecard
-
-ui.dark_mode().enable()
-create_layout()
-
-with ui.column().classes('w-full items-center'):
-    Scorecard() # <--- No arguments needed now!
-
-if __name__ in {"__main__", "__mp_main__"}:
-    ui.run(title='Salle Blanche Lab', port=8080, reload=True, favicon='♠️', show=True)
