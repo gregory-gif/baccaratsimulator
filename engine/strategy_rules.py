@@ -12,7 +12,7 @@ class PlayMode(Enum):
     ACTIVE = auto()  # Normal betting
     WATCHER = auto() # Iron Gate activated: No betting, observing
     PENALTY = auto() # Penalty Box active (Flat bets only)
-    STOPPED = auto() # Session Stop Loss/Profit Lock hitwa
+    STOPPED = auto() # Session Stop Loss/Profit Lock
 
 @dataclass
 class SessionState:
