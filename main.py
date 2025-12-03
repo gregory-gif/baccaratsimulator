@@ -1,7 +1,7 @@
 from nicegui import ui
 from ui.scorecard import Scorecard
 from ui.dashboard import show_dashboard
-from ui.simulator import show_simulator
+from ui.simulator import show_simulator  # <--- Make sure this import is here!
 
 # 1. APP CONFIGURATION
 ui.dark_mode().enable() 
@@ -22,6 +22,7 @@ def load_dashboard():
 def load_simulator():
     content.clear()
     with content:
+        # This is the line that was missing/wrong in the previous version
         show_simulator()
 
 # 3. LAYOUT & SIDEBAR
