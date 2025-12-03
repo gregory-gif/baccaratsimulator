@@ -2,6 +2,7 @@ from nicegui import ui
 import plotly.graph_objects as go
 import random
 import asyncio
+import traceback
 from engine.strategy_rules import SessionState, BaccaratStrategist, PlayMode
 from engine.tier_params import TIER_MAP, TierConfig
 
@@ -30,7 +31,6 @@ class SimulationWorker:
             
             if rnd < 0.4586: # Banker Win
                 won = True
-                # Simplified 1:1 payout for clean unit tracking as per prompt
                 pnl_change = decision['bet_amount'] 
             elif rnd < (0.4586 + 0.4462): # Player Win
                 won = False
@@ -63,49 +63,60 @@ def show_simulator():
     async def run_sim():
         nonlocal running, results
         if running: return
-        running = True
-        btn_sim.disable()
-        results = []
-        progress.set_value(0)
-        progress.set_visibility(True)
         
-        # Configuration
-        n_sessions = int(slider_sessions.value)
-        tier_level = int(select_tier.value)
-        tier = TIER_MAP[tier_level]
-        
-        # Execution
-        # We run in chunks to keep UI responsive
-        chunk_size = 10
-        total_pnl = 0
-        wins = 0
-        losses = 0
-        
-        for i in range(0, n_sessions, chunk_size):
-            # Run a batch
-            for _ in range(chunk_size):
-                if len(results) >= n_sessions: break
-                final_pnl, _ = SimulationWorker.run_session(tier)
-                results.append(final_pnl)
-                
-                if final_pnl > 0: wins += 1
-                elif final_pnl < 0: losses += 1
-                
-            # Update UI
-            progress.set_value(len(results) / n_sessions)
-            label_stats.set_text(f"Simulating... {len(results)}/{n_sessions}")
-            await asyncio.sleep(0.01) # Yield to UI
+        try:
+            running = True
+            btn_sim.disable()
+            results = []
+            progress.set_value(0)
+            progress.set_visibility(True)
+            label_stats.set_text("Initializing simulation...")
             
-        # Finalize
-        running = False
-        btn_sim.enable()
-        progress.set_visibility(False)
-        render_results(results, tier)
+            # Configuration Check
+            if not slider_sessions.value or not select_tier.value:
+                raise ValueError("Invalid settings")
+
+            n_sessions = int(slider_sessions.value)
+            tier_level = int(select_tier.value)
+            tier = TIER_MAP[tier_level]
+            
+            # Execution
+            chunk_size = 10 
+            
+            for i in range(0, n_sessions, chunk_size):
+                # Run a batch
+                for _ in range(chunk_size):
+                    if len(results) >= n_sessions: break
+                    final_pnl, _ = SimulationWorker.run_session(tier)
+                    results.append(final_pnl)
+                    
+                # Update UI
+                progress.set_value(len(results) / n_sessions)
+                label_stats.set_text(f"Simulating... {len(results)}/{n_sessions}")
+                await asyncio.sleep(0.01) # Yield to UI
+                
+            # Finalize
+            render_results(results, tier)
+            label_stats.set_text("Simulation Complete")
+
+        except Exception as e:
+            # ERROR TRAP: This will tell us what is wrong
+            error_msg = str(e)
+            print(traceback.format_exc()) # Print to Render logs
+            ui.notify(f"Simulation Failed: {error_msg}", type='negative', close_button=True, timeout=None)
+            label_stats.set_text(f"Error: {error_msg}")
+            
+        finally:
+            running = False
+            btn_sim.enable()
+            progress.set_visibility(False)
 
     def render_results(data, tier):
+        if not data: return
         total_pnl = sum(data)
         avg_pnl = total_pnl / len(data)
-        win_rate = len([x for x in data if x > 0]) / len(data) * 100
+        wins = len([x for x in data if x > 0])
+        win_rate = wins / len(data) * 100
         
         # Stats
         with stats_container:
