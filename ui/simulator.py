@@ -83,7 +83,8 @@ def show_simulator():
             tier = TIER_MAP[tier_level]
             
             # Execution
-            chunk_size = 10 
+            # FIX: Reduced chunk_size to 1 to prevent 'Connection Lost' on cloud
+            chunk_size = 1 
             
             for i in range(0, n_sessions, chunk_size):
                 # Run a batch
@@ -95,7 +96,9 @@ def show_simulator():
                 # Update UI
                 progress.set_value(len(results) / n_sessions)
                 label_stats.set_text(f"Simulating... {len(results)}/{n_sessions}")
-                await asyncio.sleep(0.01) # Yield to UI
+                
+                # CRITICAL: Yield control to server to keep connection alive
+                await asyncio.sleep(0.001) 
                 
             # Finalize
             render_results(results, tier)
@@ -168,7 +171,7 @@ def show_simulator():
             
             label_stats = ui.label('Ready to test strategy...').classes('text-sm text-slate-500 mt-2')
             
-            # Initialize Progress Bar correctly to avoid NoneType error
+            # Progress Bar logic fixed in previous step, kept here
             progress = ui.linear_progress().props('indeterminate color=blue').classes('mt-2')
             progress.set_visibility(False)
 
