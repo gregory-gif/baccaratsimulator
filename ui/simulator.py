@@ -7,62 +7,49 @@ from engine.strategy_rules import SessionState, BaccaratStrategist, PlayMode
 from engine.tier_params import TIER_MAP, TierConfig
 
 class SimulationWorker:
-    """Runs the strategy without the UI overhead."""
+    """Runs the strategy logic."""
     @staticmethod
     def run_session(tier: TierConfig, shoes_to_play=3):
-        # Initialize
         state = SessionState(tier=tier)
         state.current_shoe = 1
-        
-        # Sim Loop
-        history = [] # Track PnL over hands
+        history = [] 
         
         while state.current_shoe <= shoes_to_play and state.mode != PlayMode.STOPPED:
-            # 1. Get Decision
             decision = BaccaratStrategist.get_next_decision(state, ytd_pnl=0.0)
             
-            # 2. Check Stops
             if decision['mode'] == PlayMode.STOPPED:
                 break
                 
-            # 3. Simulate Hand (approx 50.68% Banker win probability excluding ties)
+            # Simulate Hand
             rnd = random.random()
             won = False
+            pnl_change = 0
             
-            if rnd < 0.4586: # Banker Win
+            # Bankers: 0.4586, Player: 0.4462, Tie: 0.0952
+            if rnd < 0.4586: 
                 won = True
                 pnl_change = decision['bet_amount'] 
-            elif rnd < (0.4586 + 0.4462): # Player Win
+            elif rnd < (0.4586 + 0.4462): 
                 won = False
                 pnl_change = -decision['bet_amount']
-            else: # Tie
+            else: 
+                # Tie - no change
                 pnl_change = 0
                 continue 
 
-            # 4. Update Engine
             if pnl_change != 0:
                 BaccaratStrategist.update_state_after_hand(state, won, pnl_change)
                 history.append(state.session_pnl)
                 
-            # Advance shoe if hands limit reached (approx 80 hands)
+            # Advance shoe logic (approx 80 hands)
             if state.hands_played_in_shoe >= 80:
                 state.current_shoe += 1
                 state.hands_played_in_shoe = 0
                 state.presses_this_shoe = 0
-                # Shoe 3 start snapshot
                 if state.current_shoe == 3:
                     state.shoe3_start_pnl = state.session_pnl
 
         return state.session_pnl, history
-
-    @staticmethod
-    def run_batch(tier: TierConfig, count: int):
-        """Helper to run multiple sessions in a single batch."""
-        batch_results = []
-        for _ in range(count):
-            pnl, _ = SimulationWorker.run_session(tier)
-            batch_results.append(pnl)
-        return batch_results
 
 def show_simulator():
     # UI STATE
@@ -81,9 +68,8 @@ def show_simulator():
             # Reset UI
             progress.set_value(0)
             progress.set_visibility(True)
-            label_stats.set_text("Initializing simulation...")
+            label_stats.set_text("Initializing...")
             
-            # Configuration Check
             if not slider_sessions.value or not select_tier.value:
                 raise ValueError("Invalid settings")
 
@@ -91,37 +77,40 @@ def show_simulator():
             tier_level = int(select_tier.value)
             tier = TIER_MAP[tier_level]
             
-            # Execution
-            # Now we can increase chunk size because we are threading
-            chunk_size = 20
+            # Execution Strategy: Micro-Batches
+            # We run small batches in the main thread, then YIELD to allow UI updates.
+            # This is slower but much more stable on free cloud servers.
+            batch_size = 5 
             
-            for i in range(0, n_sessions, chunk_size):
-                # Calculate remaining
-                remaining = n_sessions - len(results)
-                current_batch_size = min(chunk_size, remaining)
+            for i in range(0, n_sessions, batch_size):
+                # 1. Run a small batch of sessions
+                # We calculate how many to run in this loop (usually 5, or less at the end)
+                current_batch_count = min(batch_size, n_sessions - len(results))
+                if current_batch_count <= 0: break
                 
-                if current_batch_size <= 0: break
+                for _ in range(current_batch_count):
+                    pnl, _ = SimulationWorker.run_session(tier)
+                    results.append(pnl)
 
-                # CRITICAL FIX: Run the heavy math in a separate thread
-                # This prevents the "Connection Lost" error by freeing up the main loop
-                batch_results = await asyncio.to_thread(SimulationWorker.run_batch, tier, current_batch_size)
-                
-                results.extend(batch_results)
-                    
-                # Update UI
-                progress.set_value(len(results) / n_sessions)
+                # 2. Force UI Update
+                # We pause for 0.01 seconds. This lets the server send the
+                # "Progress Bar: 10%" message to your browser.
+                current_pct = len(results) / n_sessions
+                progress.set_value(current_pct)
                 label_stats.set_text(f"Simulating... {len(results)}/{n_sessions}")
                 
+                await asyncio.sleep(0.01) 
+                
             # Finalize
+            label_stats.set_text("Rendering Charts...")
             render_results(results, tier)
             label_stats.set_text("Simulation Complete")
 
         except Exception as e:
-            # ERROR TRAP
             error_msg = str(e)
             print(traceback.format_exc())
-            ui.notify(f"Simulation Failed: {error_msg}", type='negative', close_button=True)
-            label_stats.set_text(f"Error: {error_msg}")
+            ui.notify(f"Error: {error_msg}", type='negative', close_button=True)
+            label_stats.set_text(f"Failed: {error_msg}")
             
         finally:
             running = False
@@ -130,14 +119,16 @@ def show_simulator():
 
     def render_results(data, tier):
         if not data: return
+        
+        # Calculate Stats
         total_pnl = sum(data)
         avg_pnl = total_pnl / len(data)
         wins = len([x for x in data if x > 0])
         win_rate = wins / len(data) * 100
         
-        # Stats
+        # Update Stats Cards
+        stats_container.clear()
         with stats_container:
-            stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
                 with ui.card().classes('bg-slate-900 border-l-4 border-blue-500 p-4'):
                     ui.label('TOTAL PnL').classes('text-xs text-slate-500')
@@ -152,9 +143,9 @@ def show_simulator():
                     ui.label('WIN RATE').classes('text-xs text-slate-500')
                     ui.label(f"{win_rate:.1f}%").classes('text-2xl font-bold text-yellow-400')
 
-        # Chart
+        # Update Chart
+        chart_container.clear()
         with chart_container:
-            chart_container.clear()
             fig = go.Figure(data=[go.Histogram(x=data, nbinsx=30, marker_color='#00ff88')])
             fig.update_layout(
                 title='Session PnL Distribution',
@@ -165,10 +156,8 @@ def show_simulator():
                 yaxis=dict(title='Count', gridcolor='#334155'),
                 margin=dict(l=20, r=20, t=40, b=20)
             )
-            # Add lines for Stop Loss and Profit Lock
             fig.add_vline(x=tier.stop_loss, line_dash="dash", line_color="red", annotation_text="Stop Loss")
             fig.add_vline(x=tier.profit_lock, line_dash="dash", line_color="green", annotation_text="Target")
-            
             ui.plotly(fig).classes('w-full h-80')
 
     # --- LAYOUT ---
@@ -183,8 +172,8 @@ def show_simulator():
             
             label_stats = ui.label('Ready to test strategy...').classes('text-sm text-slate-500 mt-2')
             
-            # Progress Bar logic fixed in previous step, kept here
-            progress = ui.linear_progress().props('indeterminate color=blue').classes('mt-2')
+            # The progress bar is defined here, but visibility is toggled by the button
+            progress = ui.linear_progress().props('color=blue').classes('mt-2')
             progress.set_visibility(False)
 
         stats_container = ui.column().classes('w-full')
