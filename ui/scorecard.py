@@ -126,8 +126,8 @@ class Scorecard:
             # --- RESET / ADMIN ---
             with ui.expansion('Session Tools', icon='settings').classes('w-full bg-slate-800 text-slate-300'):
                 with ui.row().classes('p-4'):
-                    ui.button('Reset Shoe', color='warning', outline=True, icon='restart_alt')
-                    ui.button('End Session', color='red', outline=True, icon='logout')
+                    ui.button('Reset Shoe', color='warning', icon='restart_alt').props('outline')
+                    ui.button('End Session', color='red', icon='logout').props('outline')
 
 def show_scorecard():
     # Helper to clear content and show this view
