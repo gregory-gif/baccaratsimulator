@@ -20,6 +20,9 @@ class SimulationWorker:
     def run_session(current_ga: float, overrides: StrategyOverrides, tier_map: dict, use_ratchet: bool = False):
         tier = get_tier_for_ga(current_ga, tier_map)
         
+        # Safe Attribute Access
+        limit_capped = getattr(overrides, 'press_limit_capped', True)
+        
         session_overrides = overrides
         trigger_profit_amount = 0
         ratchet_triggered = False
@@ -31,7 +34,7 @@ class SimulationWorker:
                 stop_loss_units=overrides.stop_loss_units,
                 profit_lock_units=1000, 
                 press_trigger_wins=overrides.press_trigger_wins,
-                press_limit_capped=overrides.press_limit_capped
+                press_limit_capped=limit_capped
             )
         
         state = SessionState(tier=tier, overrides=session_overrides)
@@ -190,7 +193,6 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
-            # CONFIG CAPTURE
             config = {
                 'num_sims': int(slider_num_sims.value),
                 'years': int(slider_years.value),
@@ -290,7 +292,6 @@ def show_simulator():
         avg_monthly_cost = (avg_contrib - avg_tax) / total_months
         net_life_result = avg_final_ga + avg_tax - (start_ga + avg_contrib)
 
-        # 1. CHART
         with chart_container:
             chart_container.clear()
             fig = go.Figure()
@@ -302,20 +303,9 @@ def show_simulator():
             if config['use_holiday']: fig.add_hline(y=10000, line_dash="dash", line_color="yellow", annotation_text="Holiday")
             if config['use_tax']: fig.add_hline(y=12500, line_dash="dash", line_color="gold", annotation_text="Luxury Tax")
 
-            fig.update_layout(
-                title='Monte Carlo Confidence Bands', 
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)', 
-                font=dict(color='#94a3b8'), 
-                margin=dict(l=20, r=20, t=40, b=20), 
-                xaxis=dict(title='Months Passed', gridcolor='#334155'), 
-                yaxis=dict(title='Game Account (€)', gridcolor='#334155'), 
-                showlegend=True, 
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
+            fig.update_layout(title='Monte Carlo Confidence Bands', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20), xaxis=dict(title='Months Passed', gridcolor='#334155'), yaxis=dict(title='Game Account (€)', gridcolor='#334155'), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             ui.plotly(fig).classes('w-full h-96')
 
-        # 2. METRICS
         with stats_container:
             stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
@@ -341,24 +331,39 @@ def show_simulator():
                     else:
                         ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
-        # 3. REPORT
         with report_container:
             report_container.clear()
-            tax_str = "ON" if config['use_tax'] else "OFF"
-            hol_str = "ON" if config['use_holiday'] else "OFF"
-            rat_str = "ON" if config['use_ratchet'] else "OFF"
-            cap_str = "YES" if config['press_limit_capped'] else "NO"
             
-            report_text = (
-                f"MONTE CARLO REPORT ({len(results)} Universes)\n"
-                f"----------------------------------------\n"
-                f"Status Target: {config['status_target_name']}\n"
-                f"Start GA: €{start_ga:.0f} | Final GA: €{avg_final_ga:.0f}\n"
-                f"Net Life Result: €{net_life_result:.0f} (Avg)\n"
-                f"True Cost: €{avg_monthly_cost:.0f}/month\n"
-                f"Active Play: {active_pct:.1f}% ({avg_insolvent:.1f} months insolvent)\n"
-                f"Settings: Tax={tax_str}, Holiday={hol_str}, Ratchet={rat_str}, CapPress={cap_str}, Safety={config['safety']}x\n"
-            )
+            # --- CRASH-PROOF REPORT GENERATOR ---
+            try:
+                lines = []
+                lines.append(f"MONTE CARLO REPORT ({len(results)} Universes)")
+                lines.append("-" * 40)
+                
+                # Use .get() everywhere to prevent KeyErrors
+                t_name = config.get('status_target_name', 'N/A')
+                t_pts = config.get('status_target_pts', 0)
+                lines.append(f"Target: {t_name} ({t_pts:,.0f} pts)")
+                
+                lines.append(f"Start GA: €{start_ga:,.0f} | Final GA: €{avg_final_ga:,.0f}")
+                lines.append(f"Net Life Result: €{net_life_result:,.0f} (Avg)")
+                lines.append(f"True Cost: €{avg_monthly_cost:,.0f}/month")
+                lines.append(f"Active Play: {active_pct:.1f}% ({avg_insolvent:.1f} months insolvent)")
+                lines.append(f"Total Volume: €{avg_volume:,.0f}")
+                
+                tax = "ON" if config.get('use_tax', False) else "OFF"
+                hol = "ON" if config.get('use_holiday', False) else "OFF"
+                rat = "ON" if config.get('use_ratchet', False) else "OFF"
+                cap = "YES" if config.get('press_limit_capped', True) else "NO"
+                safe = config.get('safety', 0)
+                
+                lines.append(f"Settings: Tax={tax}, Holiday={hol}, Ratchet={rat}, CapPress={cap}, Safety={safe}x")
+                
+                report_text = "\n".join(lines)
+            except Exception as e:
+                report_text = f"Report Generation Failed: {str(e)}"
+                print(traceback.format_exc())
+
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.textarea(value=report_text).props('readonly autogrow input-class="font-mono text-xs"').classes('w-full')
 
@@ -483,7 +488,6 @@ def show_simulator():
             with ui.row().classes('w-full items-center justify-between'):
                 with ui.column():
                     select_tier = ui.select({1: 'Start Tier 1', 2: 'Start Tier 2'}, value=1).classes('w-40')
-                    slider_frequency = ui.slider(min=9, max=50, value=9).props('label-always color=blue').classes('w-40 hidden')
                 
                 btn_sim = ui.button('RUN STATUS SIM', on_click=run_sim).props('icon=verified color=yellow text-color=black size=lg')
         
