@@ -9,19 +9,18 @@ from engine.tier_params import TIER_MAP, TierConfig, get_tier_for_ga
 class SimulationWorker:
     """Runs the strategy logic."""
     @staticmethod
-    def run_session(tier: TierConfig, overrides: StrategyOverrides, shoes_to_play=3):
-        # Pass the overrides to the session state
+    def run_session(current_ga: float, overrides: StrategyOverrides):
+        """Runs a single session and returns the PnL."""
+        tier = get_tier_for_ga(current_ga)
         state = SessionState(tier=tier, overrides=overrides)
         state.current_shoe = 1
-        history = [] 
         
-        while state.current_shoe <= shoes_to_play and state.mode != PlayMode.STOPPED:
+        while state.current_shoe <= 3 and state.mode != PlayMode.STOPPED:
             decision = BaccaratStrategist.get_next_decision(state, ytd_pnl=0.0)
             
             if decision['mode'] == PlayMode.STOPPED:
                 break
                 
-            # Simulate Hand
             rnd = random.random()
             won = False
             pnl_change = 0
@@ -39,7 +38,6 @@ class SimulationWorker:
 
             if not is_tie:
                 BaccaratStrategist.update_state_after_hand(state, won, pnl_change)
-                history.append(state.session_pnl)
             else:
                 state.hands_played_in_shoe += 1
 
@@ -50,38 +48,43 @@ class SimulationWorker:
                 if state.current_shoe == 3:
                     state.shoe3_start_pnl = state.session_pnl
 
-        return state.session_pnl, history
-
-    @staticmethod
-    def run_career_step(current_ga: float, overrides: StrategyOverrides):
-        """Runs ONE session based on current wealth (Career Mode)."""
-        tier = get_tier_for_ga(current_ga)
-        pnl, _ = SimulationWorker.run_session(tier, overrides)
-        return pnl
+        return state.session_pnl
 
 def show_simulator():
-    results = []
+    # UI STATE
+    results = [] 
     running = False
     
+    # Metrics Storage
+    metric_contrib = 0
+    metric_tax = 0
+    metric_play_pnl = 0
+    metric_holidays = 0
+    
     async def run_sim():
-        nonlocal running, results
+        nonlocal running, results, metric_contrib, metric_tax, metric_play_pnl, metric_holidays
         if running: return
         
         try:
             running = True
             btn_sim.disable()
-            results = []
+            results = [] 
+            
+            # Reset Metrics
+            metric_contrib = 0
+            metric_tax = 0
+            metric_play_pnl = 0
+            metric_holidays = 0
             
             progress.set_value(0)
             progress.set_visibility(True)
-            label_stats.set_text("Initializing...")
+            label_stats.set_text("Initializing Ecosystem...")
             
-            # 1. TIME SETTINGS
+            # 1. SETTINGS
             years = int(slider_years.value)
             sessions_per_year = int(slider_frequency.value)
-            total_sessions = years * sessions_per_year
+            monthly_contribution = int(slider_contribution.value)
             
-            # 2. STRATEGY SETTINGS
             overrides = StrategyOverrides(
                 iron_gate_limit=int(slider_iron_gate.value),
                 stop_loss_units=int(slider_stop_loss.value),
@@ -89,44 +92,93 @@ def show_simulator():
                 press_trigger_wins=int(select_press.value)
             )
 
-            # 3. INITIAL STATE
+            # Initial Capital
             tier_level = int(select_tier.value)
             start_tier = TIER_MAP[tier_level]
-            current_career_ga = start_tier.min_ga if start_tier.min_ga >= 1700 else 1700
+            current_ga = float(start_tier.min_ga if start_tier.min_ga >= 1700 else 1700)
             
-            chunk_size = 50 
+            # 2. TIME LOOP
+            total_months = years * 12
+            sessions_played_total = 0
+            chunk_size = 6 
             
-            for i in range(0, total_sessions, chunk_size):
-                remaining = total_sessions - len(results)
-                current_batch_size = min(chunk_size, remaining)
-                if current_batch_size <= 0: break
-
-                # Career Loop (Threaded)
-                def run_career_chunk(start_ga, count, ovr):
-                    chunk_pnls = []
-                    local_ga = start_ga
-                    for _ in range(count):
-                        if local_ga < 1000: break 
-                        pnl = SimulationWorker.run_career_step(local_ga, ovr)
-                        local_ga += pnl
-                        chunk_pnls.append(pnl)
-                    return chunk_pnls, local_ga
-
-                batch_results, new_ga = await asyncio.to_thread(run_career_chunk, current_career_ga, current_batch_size, overrides)
-                current_career_ga = new_ga
-                results.extend(batch_results)
+            for m in range(0, total_months, chunk_size):
                 
-                if current_career_ga < 1000:
-                    ui.notify(f"BANKRUPT! Year {(len(results)/sessions_per_year):.1f}", type='negative')
-                    break
+                # Logic Wrapper for Threading
+                def process_months_batch(start_ga, start_sessions, batch_months):
+                    local_ga = start_ga
+                    local_sessions = start_sessions
+                    batch_history = []
+                    
+                    b_contrib = 0
+                    b_tax = 0
+                    b_play_pnl = 0
+                    b_holidays = 0
+                    
+                    for month_idx in range(batch_months):
+                        # A. LUXURY TAX (Before Contribution)
+                        # Rule: If GA > 12,500 -> Withdraw 25% of surplus
+                        if local_ga > 12500:
+                            surplus = local_ga - 12500
+                            tax = surplus * 0.25
+                            local_ga -= tax
+                            b_tax += tax
 
-                current_pct = len(results) / total_sessions
-                progress.set_value(current_pct)
-                label_stats.set_text(f"Simulating... Year {(len(results)/sessions_per_year):.1f}/{years}")
+                        # B. ECOSYSTEM: Monthly Contribution
+                        # Rule: Stop contributing if GA >= 10,000 (Holiday)
+                        if local_ga < 10000:
+                            local_ga += monthly_contribution
+                            b_contrib += monthly_contribution
+                        else:
+                            b_holidays += 1
+                        
+                        # C. INSOLVENCY CHECK
+                        can_play = True
+                        if local_ga < 1500:
+                            can_play = False
+                        
+                        # D. PLAY SESSIONS
+                        expected_sessions = int((local_sessions + 1 + month_idx + m) * (sessions_per_year / 12))
+                        sessions_due = expected_sessions - local_sessions
+                        
+                        if can_play and sessions_due > 0:
+                            for _ in range(sessions_due):
+                                pnl = SimulationWorker.run_session(local_ga, overrides)
+                                local_ga += pnl
+                                b_play_pnl += pnl
+                                local_sessions += 1
+                        
+                        batch_history.append(local_ga)
+                    
+                    return batch_history, local_ga, local_sessions, b_contrib, b_tax, b_play_pnl, b_holidays
 
-            label_stats.set_text("Rendering...")
-            render_results(results, start_tier)
-            label_stats.set_text(f"Simulation Complete: {len(results)} Sessions ({len(results)/sessions_per_year:.1f} Years)")
+                # Run Batch
+                remaining_months = min(chunk_size, total_months - m)
+                batch_res = await asyncio.to_thread(
+                    process_months_batch, current_ga, sessions_played_total, remaining_months
+                )
+                
+                # Unpack Results
+                batch_data, new_ga, new_sessions, b_con, b_tax, b_pnl, b_hol = batch_res
+                
+                # Update State
+                current_ga = new_ga
+                sessions_played_total = new_sessions
+                results.extend(batch_data)
+                
+                # Update Metrics
+                metric_contrib += b_con
+                metric_tax += b_tax
+                metric_play_pnl += b_pnl
+                metric_holidays += b_hol
+                
+                # Update UI
+                progress.set_value(len(results) / total_months)
+                label_stats.set_text(f"Simulating Month {len(results)}/{total_months} (GA: €{current_ga:,.0f})")
+
+            label_stats.set_text("Rendering Report...")
+            render_results(results, years)
+            label_stats.set_text("Simulation Complete")
 
         except Exception as e:
             error_msg = str(e)
@@ -139,96 +191,179 @@ def show_simulator():
             btn_sim.enable()
             progress.set_visibility(False)
 
-    def render_results(data, tier):
+    def render_results(data, years):
         if not data: return
-        total_pnl = sum(data)
-        avg_pnl = total_pnl / len(data)
-        wins = len([x for x in data if x > 0])
-        win_rate = wins / len(data) * 100
         
+        final_ga = data[-1]
+        start_ga = data[0]
+        total_months = years * 12
+        avg_monthly_cost = (metric_contrib - metric_tax) / total_months
+        
+        # Calculate Peak
+        peak = max(data)
+
+        # 1. MAIN STATS
         with stats_container:
             stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
                 with ui.card().classes('bg-slate-900 border-l-4 border-blue-500 p-4'):
-                    ui.label('CAREER PnL').classes('text-xs text-slate-500')
-                    ui.label(f"€{total_pnl:,.0f}").classes('text-2xl font-bold text-white')
+                    ui.label('FINAL BANKROLL').classes('text-xs text-slate-500')
+                    color = 'text-green-400' if final_ga >= start_ga else 'text-red-400'
+                    ui.label(f"€{final_ga:,.0f}").classes(f'text-2xl font-bold {color}')
                 
                 with ui.card().classes('bg-slate-900 border-l-4 border-purple-500 p-4'):
-                    ui.label('AVG SESSION').classes('text-xs text-slate-500')
-                    color = 'text-green-400' if avg_pnl > 0 else 'text-red-400'
-                    ui.label(f"€{avg_pnl:,.0f}").classes(f'text-2xl font-bold {color}')
+                    ui.label('PLAY PnL (Casino Only)').classes('text-xs text-slate-500')
+                    color = 'text-green-400' if metric_play_pnl >= 0 else 'text-red-400'
+                    ui.label(f"€{metric_play_pnl:,.0f}").classes(f'text-2xl font-bold {color}')
 
                 with ui.card().classes('bg-slate-900 border-l-4 border-yellow-500 p-4'):
-                    ui.label('WIN RATE').classes('text-xs text-slate-500')
-                    ui.label(f"{win_rate:.1f}%").classes('text-2xl font-bold text-yellow-400')
+                    ui.label('TRUE MONTHLY COST').classes('text-xs text-slate-500')
+                    # Cost = Contribution - Tax Withdrawal. If negative, you MADE money.
+                    if avg_monthly_cost <= 0:
+                        ui.label(f"+€{abs(avg_monthly_cost):.0f}/mo").classes('text-2xl font-bold text-green-400')
+                        ui.label('PROFITABLE').classes('text-xs text-green-600 font-bold')
+                    else:
+                        ui.label(f"€{avg_monthly_cost:.0f}/mo").classes('text-2xl font-bold text-red-400')
 
+        # 2. ECONOMIC REPORT CARD
+        with report_container:
+            report_container.clear()
+            with ui.card().classes('w-full bg-slate-800 p-4'):
+                ui.label('ECOSYSTEM ECONOMIC REPORT').classes('text-slate-400 text-xs font-bold tracking-widest mb-4')
+                
+                with ui.grid(columns=2).classes('w-full gap-y-2 gap-x-8'):
+                    # Row 1
+                    ui.label('Total Contributed:').classes('text-slate-300')
+                    ui.label(f"€{metric_contrib:,.0f}").classes('text-right text-white font-bold')
+                    
+                    # Row 2
+                    ui.label('Luxury Tax Withdrawn:').classes('text-slate-300')
+                    ui.label(f"€{metric_tax:,.0f}").classes('text-right text-yellow-400 font-bold')
+                    
+                    # Row 3
+                    ui.label('Contribution Holidays:').classes('text-slate-300')
+                    ui.label(f"{metric_holidays} months").classes('text-right text-blue-400 font-bold')
+                    
+                    # Row 4 (Divider)
+                    ui.separator().classes('col-span-2 bg-slate-600 my-2')
+                    
+                    # Row 5
+                    ui.label('NET LIFE RESULT:').classes('text-slate-200 font-bold')
+                    # Net Life = Final GA + Tax Withdrawn - (Start GA + Contributed)
+                    net_life = final_ga + metric_tax - (start_ga + metric_contrib)
+                    color = 'text-green-400' if net_life >= 0 else 'text-red-400'
+                    ui.label(f"€{net_life:,.0f}").classes(f'text-right font-black text-xl {color}')
+
+        # 3. CHART
         with chart_container:
             chart_container.clear()
-            cumulative = []
-            curr = 0
-            for val in data:
-                curr += val
-                cumulative.append(curr)
-                
-            fig = go.Figure(data=[go.Scatter(y=cumulative, mode='lines', line=dict(color='#00ff88', width=2))])
+            months = list(range(len(data)))
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=months, y=data, 
+                mode='lines', 
+                name='Bankroll',
+                line=dict(color='#00ff88', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(0, 255, 136, 0.1)'
+            ))
+            
+            fig.add_hline(y=1000, line_dash="dash", line_color="red", annotation_text="Insolvency")
+            fig.add_hline(y=10000, line_dash="dash", line_color="yellow", annotation_text="Holiday Limit")
+            fig.add_hline(y=12500, line_dash="dash", line_color="gold", annotation_text="Luxury Tax Threshold")
+
             fig.update_layout(
-                title='Career PnL Trajectory',
+                title='Ecosystem Trajectory',
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color='#94a3b8'),
                 margin=dict(l=20, r=20, t=40, b=20),
-                xaxis=dict(title='Sessions Played', gridcolor='#334155'),
-                yaxis=dict(title='Total Bankroll Growth (€)', gridcolor='#334155')
+                xaxis=dict(title='Months Passed', gridcolor='#334155'),
+                yaxis=dict(title='Total Game Account (€)', gridcolor='#334155')
             )
             ui.plotly(fig).classes('w-full h-80')
 
     # --- LAYOUT ---
     with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
-        ui.label('RESEARCH LAB').classes('text-2xl font-light text-slate-300')
+        ui.label('RESEARCH LAB: ECOSYSTEM').classes('text-2xl font-light text-slate-300')
         
-        # --- CONTROL PANEL ---
         with ui.card().classes('w-full bg-slate-900 p-6 gap-4'):
             
-            # Row 1: Time Settings
+            # Row 1: Ecosystem
+            with ui.row().classes('w-full gap-4 items-center'):
+                ui.icon('savings', color='green').classes('text-2xl')
+                ui.label('ECOSYSTEM').classes('font-bold text-green-400 w-24')
+                
+                with ui.column().classes('flex-grow'):
+                    slider_contribution = ui.slider(min=0, max=1000, value=300).props('color=green')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Monthly Contribution')
+                        ui.label().bind_text_from(slider_contribution, 'value', lambda v: f'€{v}/mo').classes('font-bold text-green-400')
+                
+                select_tier = ui.select({1: 'Tier 1 Start', 2: 'Tier 2 Start', 3: 'Tier 3 Start'}, value=1).classes('w-40')
+
+            ui.separator().classes('bg-slate-700')
+
+            # Row 2: Time
             with ui.row().classes('w-full gap-4 items-center'):
                 ui.icon('schedule', color='blue').classes('text-2xl')
                 ui.label('TIMELINE').classes('font-bold text-blue-400 w-24')
-                slider_years = ui.slider(min=1, max=10, value=5).props('label-always label-value="Years" color=blue').classes('flex-grow')
-                slider_frequency = ui.slider(min=9, max=100, value=9).props('label-always label-value="Sess/Yr" color=blue').classes('flex-grow')
+                
+                with ui.column().classes('flex-grow'):
+                    slider_years = ui.slider(min=1, max=10, value=5).props('color=blue')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Duration')
+                        ui.label().bind_text_from(slider_years, 'value', lambda v: f'{v} Years').classes('font-bold text-blue-400')
+
+                with ui.column().classes('flex-grow'):
+                    slider_frequency = ui.slider(min=9, max=50, value=9).props('color=blue')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Frequency')
+                        ui.label().bind_text_from(slider_frequency, 'value', lambda v: f'{v} Sess/Yr').classes('font-bold text-blue-400')
             
             ui.separator().classes('bg-slate-700')
 
-            # Row 2: Strategy Settings
+            # Row 3: Strategy Variables
             with ui.row().classes('w-full gap-4 items-center'):
                 ui.icon('tune', color='purple').classes('text-2xl')
                 ui.label('STRATEGY').classes('font-bold text-purple-400 w-24')
                 
-                # Iron Gate Limit
-                slider_iron_gate = ui.slider(min=2, max=5, value=3).props('label-always label-value="Iron Gate (Losses)" color=purple').classes('flex-grow')
-                
-                # Betting Logic
-                select_press = ui.select({0: 'Flat Bet', 1: 'Press after 1 Win', 2: 'Press after 2 Wins'}, value=2, label='Betting Mode').classes('w-48')
+                with ui.column().classes('flex-grow'):
+                    slider_iron_gate = ui.slider(min=2, max=6, value=3).props('color=purple')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Iron Gate Limit')
+                        ui.label().bind_text_from(slider_iron_gate, 'value', lambda v: f'{v} Losses').classes('font-bold text-purple-400')
 
-            # Row 3: Risk Management
+                select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2).classes('w-40')
+
+            # Row 4: Risk
             with ui.row().classes('w-full gap-4 items-center'):
                 ui.icon('shield', color='red').classes('text-2xl')
                 ui.label('RISK').classes('font-bold text-red-400 w-24')
                 
-                # Stop Loss / Profit
-                slider_stop_loss = ui.slider(min=5, max=30, value=10).props('label-always label-value="Stop (Units)" color=red').classes('flex-grow')
-                slider_profit = ui.slider(min=3, max=20, value=6).props('label-always label-value="Target (Units)" color=green').classes('flex-grow')
+                with ui.column().classes('flex-grow'):
+                    slider_stop_loss = ui.slider(min=5, max=30, value=10).props('color=red')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Stop Loss')
+                        ui.label().bind_text_from(slider_stop_loss, 'value', lambda v: f'{v} Units').classes('font-bold text-red-400')
+
+                with ui.column().classes('flex-grow'):
+                    slider_profit = ui.slider(min=3, max=20, value=6).props('color=green')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Profit Target')
+                        ui.label().bind_text_from(slider_profit, 'value', lambda v: f'{v} Units').classes('font-bold text-green-400')
 
             ui.separator().classes('bg-slate-700')
             
-            # Row 4: Action
-            with ui.row().classes('w-full items-center justify-between'):
-                select_tier = ui.select({1: 'Tier 1 Start', 2: 'Tier 2 Start', 3: 'Tier 3 Start'}, value=1, label="Starting Capital").classes('w-40')
+            # Run Button
+            with ui.row().classes('w-full items-center justify-end'):
                 btn_sim = ui.button('RUN SIMULATION', on_click=run_sim).props('icon=play_arrow color=green size=lg')
         
-        # --- OUTPUT ---
+        # Output
         label_stats = ui.label('Configure your strategy above...').classes('text-sm text-slate-500')
         progress = ui.linear_progress().props('color=blue').classes('mt-0')
         progress.set_visibility(False)
 
         stats_container = ui.column().classes('w-full')
+        report_container = ui.column().classes('w-full') # New Container for Report
         chart_container = ui.card().classes('w-full bg-slate-900 p-4')
