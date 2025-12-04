@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict
 
 @dataclass(frozen=True)
 class TierConfig:
@@ -10,62 +10,75 @@ class TierConfig:
     press_unit: int
     stop_loss: int
     profit_lock: int
-    max_presses_per_shoe: int
-    catastrophic_cap: int  # YTD Loss Limit
+    catastrophic_cap: int
 
-# 3. THE UNIFIED LADDER & 4.2 CATASTROPHIC CAP
-# Note: Tier 0 is for the first session logic if needed, but primarily we map 1-5.
-TIER_MAP = {
-    1: TierConfig(
-        level=1, min_ga=1500, max_ga=1999, 
-        base_unit=50, press_unit=100, 
-        stop_loss=-400, profit_lock=500, 
-        max_presses_per_shoe=2, catastrophic_cap=-1400
-    ),
-    2: TierConfig(
-        level=2, min_ga=2000, max_ga=2999, 
-        base_unit=100, press_unit=150, 
-        stop_loss=-800, profit_lock=1000, 
-        max_presses_per_shoe=3, catastrophic_cap=-2800
-    ),
-    3: TierConfig(
-        level=3, min_ga=3000, max_ga=4999, 
-        base_unit=150, press_unit=200, 
-        stop_loss=-1200, profit_lock=1500, 
-        max_presses_per_shoe=5, catastrophic_cap=-4200
-    ),
-    4: TierConfig(
-        level=4, min_ga=5000, max_ga=7499, 
-        base_unit=200, press_unit=300, 
-        stop_loss=-1600, profit_lock=2000, 
-        max_presses_per_shoe=5, catastrophic_cap=-5600
-    ),
-    5: TierConfig(
-        level=5, min_ga=7500, max_ga=999999, 
-        base_unit=250, press_unit=375, 
-        stop_loss=-2000, profit_lock=2500, 
-        max_presses_per_shoe=5, catastrophic_cap=-7000
-    ),
-}
+def generate_tier_map(safety_factor: int = 20) -> Dict[int, TierConfig]:
+    """
+    Generates the Tier Ladder based on Risk Tolerance.
+    safety_factor: How many Base Units you need to play this tier.
+    
+    Standard Doctrine (High Risk): Factor 20 (e.g. €2000 for €100 bets = 5% risk)
+    Conservative (Pro): Factor 40 (e.g. €4000 for €100 bets = 2.5% risk)
+    """
+    
+    # Base Units are fixed by Table Limits logic
+    # Tier 1: €50, Tier 2: €100, Tier 3: €150, Tier 4: €200, Tier 5: €250
+    specs = [
+        (1, 50, 100),
+        (2, 100, 150),
+        (3, 150, 200),
+        (4, 200, 300),
+        (5, 250, 375)
+    ]
+    
+    tier_map = {}
+    
+    # Hardcoded floor for Tier 1 to allow starting small
+    # Standard: 1500. If we use factor, 50*20 = 1000.
+    # We'll use the MAX of (1500, Base*Factor) for Tier 1 to respect Doctrine minimums.
+    
+    for i, (level, base, press) in enumerate(specs):
+        if level == 1:
+            start_ga = max(1500, base * safety_factor)
+        else:
+            start_ga = base * safety_factor
+            
+        # Stop Loss / Profit Lock Scaling (Maintain ~8-10 units ratios)
+        # Stop Loss: ~10 units (or calculated relative)
+        stop = -(base * 10) 
+        profit = base * 6 # Doctrine 2.0 (+6 units)
+        
+        # Cap: ~3.5x Stop Loss
+        cat_cap = stop * 3.5
+        
+        # Calculate End GA (Start of next tier - 1)
+        if i < len(specs) - 1:
+            next_base = specs[i+1][1]
+            end_ga = (next_base * safety_factor) - 1
+        else:
+            end_ga = 9999999
+            
+        tier_map[level] = TierConfig(
+            level=level,
+            min_ga=int(start_ga),
+            max_ga=int(end_ga),
+            base_unit=base,
+            press_unit=press,
+            stop_loss=stop,
+            profit_lock=profit,
+            catastrophic_cap=int(cat_cap)
+        )
+        
+    return tier_map
 
-def get_tier_for_ga(ga: float) -> TierConfig:
-    """
-    Returns the TierConfig based on the current Game Account (GA).
-    Falls back to Tier 1 if GA is below 1500 (Insolvency checks handled elsewhere).
-    """
-    for tier_level, config in TIER_MAP.items():
+def get_tier_for_ga(ga: float, tier_map: Dict[int, TierConfig]) -> TierConfig:
+    """Finds the correct tier in a generated map."""
+    for tier_level, config in tier_map.items():
         if config.min_ga <= ga <= config.max_ga:
             return config
-    
-    # Fallback for low bankroll (handled by Insolvency Floor usually) or extremely high
-    if ga < 1500:
-        return TIER_MAP[1]
-    return TIER_MAP[5]
-
-def get_churn_bet_size(tier_level: int) -> int:
-    """
-    4.1 C: Gold Churn - Churn at one Tier lower than current Play Tier.
-    """
-    if tier_level <= 2:
-        return 50
-    return 100
+            
+    # Fallback logic
+    lowest_min = tier_map[1].min_ga
+    if ga < lowest_min:
+        return tier_map[1]
+    return tier_map[5]
