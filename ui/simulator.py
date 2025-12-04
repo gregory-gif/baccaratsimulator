@@ -145,4 +145,112 @@ class SimulationWorker:
                     current_year_points += points
             
             if gold_hit_year == -1 and current_year_points >= target_points:
-                gold_hit_
+                gold_hit_year = (m // 12) + 1
+            
+            trajectory.append(current_ga)
+            
+        return {
+            'trajectory': trajectory,
+            'final_ga': current_ga,
+            'contrib': m_contrib,
+            'tax': m_tax,
+            'play_pnl': m_play_pnl,
+            'holidays': m_holidays,
+            'insolvent_months': m_insolvent_months,
+            'total_volume': m_total_volume,
+            'gold_year': gold_hit_year
+        }
+
+def show_simulator():
+    running = False
+    
+    def update_ladder_preview():
+        factor = slider_safety.value
+        t_map = generate_tier_map(factor)
+        rows = []
+        for level, t in t_map.items():
+            risk_pct = (t.base_unit / t.min_ga) * 100
+            rows.append({
+                'tier': f"Tier {level}",
+                'bet': f"€{t.base_unit}",
+                'start': f"€{t.min_ga:,.0f}",
+                'risk': f"{risk_pct:.1f}%"
+            })
+        ladder_grid.options['rowData'] = rows
+        ladder_grid.update()
+
+    async def run_sim():
+        nonlocal running
+        if running: return
+        
+        try:
+            running = True
+            btn_sim.disable()
+            progress.set_value(0)
+            progress.set_visibility(True)
+            label_stats.set_text("Initializing Multiverse...")
+            
+            # --- SAFE CONFIG CAPTURE ---
+            config = {
+                'num_sims': int(slider_num_sims.value),
+                'years': int(slider_years.value),
+                'freq': int(slider_frequency.value),
+                'contrib_win': int(slider_contrib_win.value),
+                'contrib_loss': int(slider_contrib_loss.value),
+                'status_target_name': select_status.value,
+                'status_target_pts': SBM_TIERS[select_status.value],
+                'earn_rate': float(slider_earn_rate.value),
+                'use_ratchet': switch_ratchet.value,
+                'use_tax': switch_luxury_tax.value,
+                'use_holiday': switch_holiday.value,
+                'safety': int(slider_safety.value),
+                'start_tier': int(select_tier.value),
+                'press_limit_capped': switch_capped.value 
+            }
+            
+            total_months = config['years'] * 12
+            
+            overrides = StrategyOverrides(
+                iron_gate_limit=int(slider_iron_gate.value),
+                stop_loss_units=int(slider_stop_loss.value),
+                profit_lock_units=int(slider_profit.value),
+                press_trigger_wins=int(select_press.value),
+                press_limit_capped=switch_capped.value
+            )
+
+            temp_map = generate_tier_map(config['safety'])
+            start_ga = temp_map[config['start_tier']].min_ga
+            
+            all_results = []
+            batch_size = 10
+            for i in range(0, config['num_sims'], batch_size):
+                count = min(batch_size, config['num_sims'] - i)
+                
+                def run_batch_careers():
+                    batch_data = []
+                    for _ in range(count):
+                        res = SimulationWorker.run_full_career(
+                            start_ga, total_months, config['freq'],
+                            config['contrib_win'], config['contrib_loss'], overrides, 
+                            config['use_ratchet'], config['use_tax'], config['use_holiday'], 
+                            config['safety'], config['status_target_pts'], config['earn_rate']
+                        )
+                        batch_data.append(res)
+                    return batch_data
+
+                batch_res = await asyncio.to_thread(run_batch_careers)
+                all_results.extend(batch_res)
+                
+                pct = len(all_results) / config['num_sims']
+                progress.set_value(pct)
+                label_stats.set_text(f"Simulating Universe {len(all_results)}/{config['num_sims']}")
+
+            label_stats.set_text("Analyzing Data...")
+            render_analysis(all_results, config, start_ga)
+            label_stats.set_text("Simulation Complete")
+
+        except Exception as e:
+            error_msg = str(e)
+            print(traceback.format_exc())
+            ui.notify(f"Error: {error_msg}", type='negative', close_button=True)
+            label_stats.set_text(f"Failed: {error_
