@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 @dataclass(frozen=True)
 class TierConfig:
@@ -16,13 +16,10 @@ def generate_tier_map(safety_factor: int = 20) -> Dict[int, TierConfig]:
     """
     Generates the Tier Ladder based on Risk Tolerance.
     safety_factor: How many Base Units you need to play this tier.
-    
-    Standard Doctrine (High Risk): Factor 20 (e.g. €2000 for €100 bets = 5% risk)
-    Conservative (Pro): Factor 40 (e.g. €4000 for €100 bets = 2.5% risk)
+    Standard Doctrine = 20. Conservative = 40.
     """
     
-    # Base Units are fixed by Table Limits logic
-    # Tier 1: €50, Tier 2: €100, Tier 3: €150, Tier 4: €200, Tier 5: €250
+    # Base Units: Tier 1=50, Tier 2=100, Tier 3=150, Tier 4=200, Tier 5=250
     specs = [
         (1, 50, 100),
         (2, 100, 150),
@@ -33,20 +30,16 @@ def generate_tier_map(safety_factor: int = 20) -> Dict[int, TierConfig]:
     
     tier_map = {}
     
-    # Hardcoded floor for Tier 1 to allow starting small
-    # Standard: 1500. If we use factor, 50*20 = 1000.
-    # We'll use the MAX of (1500, Base*Factor) for Tier 1 to respect Doctrine minimums.
-    
     for i, (level, base, press) in enumerate(specs):
         if level == 1:
+            # Floor of 1500 or calculated risk, whichever is higher
             start_ga = max(1500, base * safety_factor)
         else:
             start_ga = base * safety_factor
             
-        # Stop Loss / Profit Lock Scaling (Maintain ~8-10 units ratios)
-        # Stop Loss: ~10 units (or calculated relative)
+        # Stop Loss: ~10 units | Profit: +6 units
         stop = -(base * 10) 
-        profit = base * 6 # Doctrine 2.0 (+6 units)
+        profit = base * 6 
         
         # Cap: ~3.5x Stop Loss
         cat_cap = stop * 3.5
@@ -54,7 +47,9 @@ def generate_tier_map(safety_factor: int = 20) -> Dict[int, TierConfig]:
         # Calculate End GA (Start of next tier - 1)
         if i < len(specs) - 1:
             next_base = specs[i+1][1]
-            end_ga = (next_base * safety_factor) - 1
+            # Ensure next tier start doesn't overlap weirdly if safety factor is low
+            next_start = next_base * safety_factor
+            end_ga = next_start - 1
         else:
             end_ga = 9999999
             
@@ -71,8 +66,18 @@ def generate_tier_map(safety_factor: int = 20) -> Dict[int, TierConfig]:
         
     return tier_map
 
-def get_tier_for_ga(ga: float, tier_map: Dict[int, TierConfig]) -> TierConfig:
-    """Finds the correct tier in a generated map."""
+# --- CRITICAL FIX: EXPORT DEFAULT MAP ---
+# This prevents ImportError in other files that expect TIER_MAP to exist.
+TIER_MAP = generate_tier_map(safety_factor=20)
+
+def get_tier_for_ga(ga: float, tier_map: Optional[Dict[int, TierConfig]] = None) -> TierConfig:
+    """
+    Finds the correct tier.
+    If tier_map is None, uses the default TIER_MAP (Standard Doctrine).
+    """
+    if tier_map is None:
+        tier_map = TIER_MAP
+
     for tier_level, config in tier_map.items():
         if config.min_ga <= ga <= config.max_ga:
             return config
@@ -82,3 +87,8 @@ def get_tier_for_ga(ga: float, tier_map: Dict[int, TierConfig]) -> TierConfig:
     if ga < lowest_min:
         return tier_map[1]
     return tier_map[5]
+
+def get_churn_bet_size(tier_level: int) -> int:
+    if tier_level <= 2:
+        return 50
+    return 100
