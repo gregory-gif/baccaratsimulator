@@ -33,15 +33,15 @@ class SimulationWorker:
                 won = False
                 pnl_change = -decision['bet_amount']
             else: 
-                # Tie - no change
-                pnl_change = 0
+                # Tie - Ignore and re-deal (standard road rules)
                 continue 
 
-            if pnl_change != 0:
-                BaccaratStrategist.update_state_after_hand(state, won, pnl_change)
-                history.append(state.session_pnl)
+            # CRITICAL FIX: Update state even if pnl_change is 0 (Watcher Mode)
+            # This prevents the Infinite Loop when betting €0.
+            BaccaratStrategist.update_state_after_hand(state, won, pnl_change)
+            history.append(state.session_pnl)
                 
-            # Advance shoe logic (approx 80 hands)
+            # Advance shoe logic
             if state.hands_played_in_shoe >= 80:
                 state.current_shoe += 1
                 state.hands_played_in_shoe = 0
@@ -50,6 +50,15 @@ class SimulationWorker:
                     state.shoe3_start_pnl = state.session_pnl
 
         return state.session_pnl, history
+
+    @staticmethod
+    def run_batch(tier: TierConfig, count: int):
+        """Helper to run a batch in a separate thread."""
+        batch_results = []
+        for _ in range(count):
+            pnl, _ = SimulationWorker.run_session(tier)
+            batch_results.append(pnl)
+        return batch_results
 
 def show_simulator():
     # UI STATE
@@ -77,29 +86,24 @@ def show_simulator():
             tier_level = int(select_tier.value)
             tier = TIER_MAP[tier_level]
             
-            # Execution Strategy: Micro-Batches
-            # We run small batches in the main thread, then YIELD to allow UI updates.
-            # This is slower but much more stable on free cloud servers.
-            batch_size = 5 
+            # Professional Plan Configuration:
+            # We use large batches and run them in a separate thread.
+            chunk_size = 50 
             
-            for i in range(0, n_sessions, batch_size):
-                # 1. Run a small batch of sessions
-                # We calculate how many to run in this loop (usually 5, or less at the end)
-                current_batch_count = min(batch_size, n_sessions - len(results))
-                if current_batch_count <= 0: break
+            for i in range(0, n_sessions, chunk_size):
+                remaining = n_sessions - len(results)
+                current_batch_size = min(chunk_size, remaining)
                 
-                for _ in range(current_batch_count):
-                    pnl, _ = SimulationWorker.run_session(tier)
-                    results.append(pnl)
+                if current_batch_size <= 0: break
 
-                # 2. Force UI Update
-                # We pause for 0.01 seconds. This lets the server send the
-                # "Progress Bar: 10%" message to your browser.
+                # Run heavy math in background thread (Non-Blocking)
+                batch_results = await asyncio.to_thread(SimulationWorker.run_batch, tier, current_batch_size)
+                results.extend(batch_results)
+                    
+                # Update UI
                 current_pct = len(results) / n_sessions
                 progress.set_value(current_pct)
                 label_stats.set_text(f"Simulating... {len(results)}/{n_sessions}")
-                
-                await asyncio.sleep(0.01) 
                 
             # Finalize
             label_stats.set_text("Rendering Charts...")
@@ -172,7 +176,6 @@ def show_simulator():
             
             label_stats = ui.label('Ready to test strategy...').classes('text-sm text-slate-500 mt-2')
             
-            # The progress bar is defined here, but visibility is toggled by the button
             progress = ui.linear_progress().props('color=blue').classes('mt-2')
             progress.set_visibility(False)
 
