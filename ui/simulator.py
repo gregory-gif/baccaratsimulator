@@ -204,7 +204,8 @@ def show_simulator():
                 'use_tax': switch_luxury_tax.value,
                 'use_holiday': switch_holiday.value,
                 'safety': int(slider_safety.value),
-                'start_tier': int(select_tier.value)
+                'start_tier': int(select_tier.value),
+                'press_limit_capped': switch_capped.value # Added missing config
             }
             
             total_months = config['years'] * 12
@@ -333,7 +334,7 @@ def show_simulator():
             tax_str = "ON" if config['use_tax'] else "OFF"
             hol_str = "ON" if config['use_holiday'] else "OFF"
             rat_str = "ON" if config['use_ratchet'] else "OFF"
-            cap_str = "YES" if overrides.press_limit_capped else "NO"
+            cap_str = "YES" if config['press_limit_capped'] else "NO"
             
             report_text = (
                 f"MONTE CARLO REPORT ({len(results)} Universes)\n"
@@ -394,9 +395,9 @@ def show_simulator():
                 slider_contrib_win = ui.slider(min=0, max=1000, value=200).props('label-always color=green').classes('flex-grow')
                 slider_contrib_loss = ui.slider(min=0, max=1000, value=100).props('label-always color=orange').classes('flex-grow')
                 with ui.column().classes('gap-2'):
-                    switch_luxury_tax = ui.switch('Tax').props('color=gold')
+                    switch_luxury_tax = ui.switch('Tax').props('color=gold').bind_value_to(switch_luxury_tax, 'value')
                     switch_luxury_tax.value = True
-                    switch_holiday = ui.switch('Holiday').props('color=blue')
+                    switch_holiday = ui.switch('Holiday').props('color=blue').bind_value_to(switch_holiday, 'value')
                     switch_holiday.value = True
 
             # Row 5: Tactics
