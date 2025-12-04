@@ -83,7 +83,10 @@ def show_simulator():
             # 1. SETTINGS
             years = int(slider_years.value)
             sessions_per_year = int(slider_frequency.value)
-            monthly_contribution = int(slider_contribution.value)
+            
+            # Dynamic Contributions
+            contrib_win = int(slider_contrib_win.value)
+            contrib_loss = int(slider_contrib_loss.value)
             
             overrides = StrategyOverrides(
                 iron_gate_limit=int(slider_iron_gate.value),
@@ -100,14 +103,20 @@ def show_simulator():
             # 2. TIME LOOP
             total_months = years * 12
             sessions_played_total = 0
+            
+            # Track 'Last Session Result' to determine contribution
+            # Default to False (Conservative start: assume base contribution)
+            last_session_won = False 
+            
             chunk_size = 6 
             
             for m in range(0, total_months, chunk_size):
                 
                 # Logic Wrapper for Threading
-                def process_months_batch(start_ga, start_sessions, batch_months):
+                def process_months_batch(start_ga, start_sessions, batch_months, start_last_won):
                     local_ga = start_ga
                     local_sessions = start_sessions
+                    local_last_won = start_last_won
                     batch_history = []
                     
                     b_contrib = 0
@@ -117,18 +126,19 @@ def show_simulator():
                     
                     for month_idx in range(batch_months):
                         # A. LUXURY TAX (Before Contribution)
-                        # Rule: If GA > 12,500 -> Withdraw 25% of surplus
                         if local_ga > 12500:
                             surplus = local_ga - 12500
                             tax = surplus * 0.25
                             local_ga -= tax
                             b_tax += tax
 
-                        # B. ECOSYSTEM: Monthly Contribution
+                        # B. ECOSYSTEM: Dynamic Monthly Contribution
                         # Rule: Stop contributing if GA >= 10,000 (Holiday)
                         if local_ga < 10000:
-                            local_ga += monthly_contribution
-                            b_contrib += monthly_contribution
+                            # Apply Dynamic Rule:
+                            amount = contrib_win if local_last_won else contrib_loss
+                            local_ga += amount
+                            b_contrib += amount
                         else:
                             b_holidays += 1
                         
@@ -147,23 +157,26 @@ def show_simulator():
                                 local_ga += pnl
                                 b_play_pnl += pnl
                                 local_sessions += 1
+                                # Update Win State for NEXT month's contribution
+                                local_last_won = (pnl > 0)
                         
                         batch_history.append(local_ga)
                     
-                    return batch_history, local_ga, local_sessions, b_contrib, b_tax, b_play_pnl, b_holidays
+                    return batch_history, local_ga, local_sessions, b_contrib, b_tax, b_play_pnl, b_holidays, local_last_won
 
                 # Run Batch
                 remaining_months = min(chunk_size, total_months - m)
                 batch_res = await asyncio.to_thread(
-                    process_months_batch, current_ga, sessions_played_total, remaining_months
+                    process_months_batch, current_ga, sessions_played_total, remaining_months, last_session_won
                 )
                 
                 # Unpack Results
-                batch_data, new_ga, new_sessions, b_con, b_tax, b_pnl, b_hol = batch_res
+                batch_data, new_ga, new_sessions, b_con, b_tax, b_pnl, b_hol, new_last_won = batch_res
                 
                 # Update State
                 current_ga = new_ga
                 sessions_played_total = new_sessions
+                last_session_won = new_last_won # Persistence for next batch
                 results.extend(batch_data)
                 
                 # Update Metrics
@@ -199,7 +212,6 @@ def show_simulator():
         total_months = years * 12
         avg_monthly_cost = (metric_contrib - metric_tax) / total_months
         
-        # Calculate Peak
         peak = max(data)
 
         # 1. MAIN STATS
@@ -218,7 +230,6 @@ def show_simulator():
 
                 with ui.card().classes('bg-slate-900 border-l-4 border-yellow-500 p-4'):
                     ui.label('TRUE MONTHLY COST').classes('text-xs text-slate-500')
-                    # Cost = Contribution - Tax Withdrawal. If negative, you MADE money.
                     if avg_monthly_cost <= 0:
                         ui.label(f"+€{abs(avg_monthly_cost):.0f}/mo").classes('text-2xl font-bold text-green-400')
                         ui.label('PROFITABLE').classes('text-xs text-green-600 font-bold')
@@ -232,24 +243,18 @@ def show_simulator():
                 ui.label('ECOSYSTEM ECONOMIC REPORT').classes('text-slate-400 text-xs font-bold tracking-widest mb-4')
                 
                 with ui.grid(columns=2).classes('w-full gap-y-2 gap-x-8'):
-                    # Row 1
                     ui.label('Total Contributed:').classes('text-slate-300')
                     ui.label(f"€{metric_contrib:,.0f}").classes('text-right text-white font-bold')
                     
-                    # Row 2
                     ui.label('Luxury Tax Withdrawn:').classes('text-slate-300')
                     ui.label(f"€{metric_tax:,.0f}").classes('text-right text-yellow-400 font-bold')
                     
-                    # Row 3
                     ui.label('Contribution Holidays:').classes('text-slate-300')
                     ui.label(f"{metric_holidays} months").classes('text-right text-blue-400 font-bold')
                     
-                    # Row 4 (Divider)
                     ui.separator().classes('col-span-2 bg-slate-600 my-2')
                     
-                    # Row 5
                     ui.label('NET LIFE RESULT:').classes('text-slate-200 font-bold')
-                    # Net Life = Final GA + Tax Withdrawn - (Start GA + Contributed)
                     net_life = final_ga + metric_tax - (start_ga + metric_contrib)
                     color = 'text-green-400' if net_life >= 0 else 'text-red-400'
                     ui.label(f"€{net_life:,.0f}").classes(f'text-right font-black text-xl {color}')
@@ -295,10 +300,16 @@ def show_simulator():
                 ui.label('ECOSYSTEM').classes('font-bold text-green-400 w-24')
                 
                 with ui.column().classes('flex-grow'):
-                    slider_contribution = ui.slider(min=0, max=1000, value=300).props('color=green')
+                    # DYNAMIC CONTRIBUTIONS
+                    slider_contrib_win = ui.slider(min=0, max=1000, value=200).props('color=green')
                     with ui.row().classes('justify-between w-full'):
-                        ui.label('Monthly Contribution')
-                        ui.label().bind_text_from(slider_contribution, 'value', lambda v: f'€{v}/mo').classes('font-bold text-green-400')
+                        ui.label('Contrib (Post-Win)')
+                        ui.label().bind_text_from(slider_contrib_win, 'value', lambda v: f'€{v}/mo').classes('font-bold text-green-400')
+
+                    slider_contrib_loss = ui.slider(min=0, max=1000, value=100).props('color=orange') # Orange for distinction
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Contrib (Post-Loss)')
+                        ui.label().bind_text_from(slider_contrib_loss, 'value', lambda v: f'€{v}/mo').classes('font-bold text-orange-400')
                 
                 select_tier = ui.select({1: 'Tier 1 Start', 2: 'Tier 2 Start', 3: 'Tier 3 Start'}, value=1).classes('w-40')
 
@@ -365,5 +376,5 @@ def show_simulator():
         progress.set_visibility(False)
 
         stats_container = ui.column().classes('w-full')
-        report_container = ui.column().classes('w-full') # New Container for Report
+        report_container = ui.column().classes('w-full')
         chart_container = ui.card().classes('w-full bg-slate-900 p-4')
