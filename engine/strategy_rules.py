@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from .tier_params import TierConfig
 
@@ -22,7 +22,7 @@ class StrategyOverrides:
     stop_loss_units: int = 10
     profit_lock_units: int = 6
     press_trigger_wins: int = 2 
-    press_limit_capped: bool = True # <--- THIS IS THE CRITICAL MISSING VARIABLE
+    press_limit_capped: bool = True # <--- CRITICAL: This variable must exist!
 
 @dataclass
 class SessionState:
@@ -95,12 +95,9 @@ class BaccaratStrategist:
         
         # Override logic
         if state.overrides:
-            # Use the variable safely
+            # Use the variable safely (fallback to True if missing)
             is_capped = getattr(state.overrides, 'press_limit_capped', True)
-            if is_capped:
-                max_press = default_max_press
-            else:
-                max_press = 999 
+            max_press = default_max_press if is_capped else 999
         else:
             max_press = default_max_press
 
