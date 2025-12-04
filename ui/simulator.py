@@ -108,14 +108,12 @@ class SimulationWorker:
             if m > 0 and m % 12 == 0:
                 current_year_points = 0
 
-            # A. Luxury Tax
             if use_tax and current_ga > 12500:
                 surplus = current_ga - 12500
                 tax = surplus * 0.25
                 current_ga -= tax
                 m_tax += tax
 
-            # B. Contribution
             should_contribute = True
             if use_holiday and current_ga >= 10000:
                 should_contribute = False
@@ -127,7 +125,6 @@ class SimulationWorker:
             else:
                 m_holidays += 1
             
-            # C. Play
             can_play = (current_ga >= 1500)
             if not can_play:
                 m_insolvent_months += 1
@@ -193,23 +190,24 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
-            # Read Values from UI
-            num_sims = int(slider_num_sims.value)
-            years = int(slider_years.value)
-            sessions_per_year = int(slider_frequency.value)
-            total_months = years * 12
+            # --- CAPTURE ALL CONFIG TO PREVENT CRASHES ---
+            config = {
+                'num_sims': int(slider_num_sims.value),
+                'years': int(slider_years.value),
+                'freq': int(slider_frequency.value),
+                'contrib_win': int(slider_contrib_win.value),
+                'contrib_loss': int(slider_contrib_loss.value),
+                'status_target_name': select_status.value,
+                'status_target_pts': SBM_TIERS[select_status.value],
+                'earn_rate': float(slider_earn_rate.value),
+                'use_ratchet': switch_ratchet.value,
+                'use_tax': switch_luxury_tax.value,
+                'use_holiday': switch_holiday.value,
+                'safety': int(slider_safety.value),
+                'start_tier': int(select_tier.value)
+            }
             
-            contrib_win = int(slider_contrib_win.value)
-            contrib_loss = int(slider_contrib_loss.value)
-            
-            status_target = SBM_TIERS[select_status.value]
-            earn_rate = float(slider_earn_rate.value)
-            
-            # Read Toggles (Fixing the reference bug)
-            use_ratchet = switch_ratchet.value
-            use_tax = switch_luxury_tax.value
-            use_holiday = switch_holiday.value
-            safety_factor = int(slider_safety.value)
+            total_months = config['years'] * 12
             
             overrides = StrategyOverrides(
                 iron_gate_limit=int(slider_iron_gate.value),
@@ -219,23 +217,22 @@ def show_simulator():
                 press_limit_capped=switch_capped.value
             )
 
-            temp_map = generate_tier_map(safety_factor)
-            tier_level = int(select_tier.value)
-            start_ga = temp_map[tier_level].min_ga
+            temp_map = generate_tier_map(config['safety'])
+            start_ga = temp_map[config['start_tier']].min_ga
             
             all_results = []
             batch_size = 10
-            for i in range(0, num_sims, batch_size):
-                count = min(batch_size, num_sims - i)
+            for i in range(0, config['num_sims'], batch_size):
+                count = min(batch_size, config['num_sims'] - i)
                 
                 def run_batch_careers():
                     batch_data = []
                     for _ in range(count):
                         res = SimulationWorker.run_full_career(
-                            start_ga, total_months, sessions_per_year,
-                            contrib_win, contrib_loss, overrides, use_ratchet,
-                            use_tax, use_holiday, safety_factor, 
-                            status_target, earn_rate
+                            start_ga, total_months, config['freq'],
+                            config['contrib_win'], config['contrib_loss'], overrides, 
+                            config['use_ratchet'], config['use_tax'], config['use_holiday'], 
+                            config['safety'], config['status_target_pts'], config['earn_rate']
                         )
                         batch_data.append(res)
                     return batch_data
@@ -243,12 +240,13 @@ def show_simulator():
                 batch_res = await asyncio.to_thread(run_batch_careers)
                 all_results.extend(batch_res)
                 
-                pct = len(all_results) / num_sims
+                pct = len(all_results) / config['num_sims']
                 progress.set_value(pct)
-                label_stats.set_text(f"Simulating Universe {len(all_results)}/{num_sims}")
+                label_stats.set_text(f"Simulating Universe {len(all_results)}/{config['num_sims']}")
 
             label_stats.set_text("Analyzing Data...")
-            render_analysis(all_results, years, start_ga, status_target)
+            # Pass the CONFIG dict to render_analysis
+            render_analysis(all_results, config, start_ga)
             label_stats.set_text("Simulation Complete")
 
         except Exception as e:
@@ -262,7 +260,7 @@ def show_simulator():
             btn_sim.enable()
             progress.set_visibility(False)
 
-    def render_analysis(results, years, start_ga, status_target):
+    def render_analysis(results, config, start_ga):
         if not results: return
         
         trajectories = np.array([r['trajectory'] for r in results])
@@ -285,7 +283,7 @@ def show_simulator():
         gold_prob = (len(gold_hits) / len(results)) * 100
         avg_year_hit = np.mean(gold_hits) if gold_hits else 0
         
-        total_months = years * 12
+        total_months = config['years'] * 12
         insolvency_pct = (avg_insolvent / total_months) * 100
         active_pct = 100 - insolvency_pct
         avg_monthly_cost = (avg_contrib - avg_tax) / total_months
@@ -299,8 +297,8 @@ def show_simulator():
             fig.add_trace(go.Scatter(x=months, y=mean_line, mode='lines', name='Average', line=dict(color='white', width=2)))
             
             fig.add_hline(y=1000, line_dash="dash", line_color="red", annotation_text="Insolvency")
-            if switch_holiday.value: fig.add_hline(y=10000, line_dash="dash", line_color="yellow", annotation_text="Holiday")
-            if switch_luxury_tax.value: fig.add_hline(y=12500, line_dash="dash", line_color="gold", annotation_text="Luxury Tax")
+            if config['use_holiday']: fig.add_hline(y=10000, line_dash="dash", line_color="yellow", annotation_text="Holiday")
+            if config['use_tax']: fig.add_hline(y=12500, line_dash="dash", line_color="gold", annotation_text="Luxury Tax")
 
             fig.update_layout(title='Monte Carlo Confidence Bands', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20), xaxis=dict(title='Months Passed', gridcolor='#334155'), yaxis=dict(title='Game Account (€)', gridcolor='#334155'), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             ui.plotly(fig).classes('w-full h-96')
@@ -309,7 +307,7 @@ def show_simulator():
             stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
                 with ui.card().classes('bg-slate-900 border-l-4 border-yellow-500 p-4'):
-                    ui.label(f'{select_status.value.upper()} PROBABILITY').classes('text-xs text-slate-500')
+                    ui.label(f"{config['status_target_name'].upper()} PROBABILITY").classes('text-xs text-slate-500')
                     g_color = 'text-green-400' if gold_prob > 80 else 'text-yellow-400'
                     if gold_prob < 50: g_color = 'text-red-400'
                     ui.label(f"{gold_prob:.1f}%").classes(f'text-3xl font-black {g_color}')
@@ -332,20 +330,20 @@ def show_simulator():
 
         with report_container:
             report_container.clear()
-            # FIXED: Safely accessing the switch values directly from the closure variables
-            # which are now properly assigned in the layout section below.
-            tax_status = "ON" if switch_luxury_tax.value else "OFF"
-            holiday_status = "ON" if switch_holiday.value else "OFF"
+            tax_str = "ON" if config['use_tax'] else "OFF"
+            hol_str = "ON" if config['use_holiday'] else "OFF"
+            rat_str = "ON" if config['use_ratchet'] else "OFF"
+            cap_str = "YES" if overrides.press_limit_capped else "NO"
             
             report_text = (
                 f"MONTE CARLO REPORT ({len(results)} Universes)\n"
                 f"----------------------------------------\n"
-                f"Status Target: {select_status.value}\n"
+                f"Status Target: {config['status_target_name']}\n"
                 f"Start GA: €{start_ga:.0f} | Final GA: €{avg_final_ga:.0f}\n"
                 f"Net Life Result: €{net_life_result:.0f} (Avg)\n"
                 f"True Cost: €{avg_monthly_cost:.0f}/month\n"
                 f"Active Play: {active_pct:.1f}%\n"
-                f"Tax On: {tax_status} | Holiday On: {holiday_status}\n"
+                f"Settings: Tax={tax_str}, Holiday={hol_str}, Ratchet={rat_str}, CapPress={cap_str}\n"
             )
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.textarea(value=report_text).props('readonly autogrow input-class="font-mono text-xs"').classes('w-full')
@@ -375,7 +373,6 @@ def show_simulator():
                 select_status = ui.select(list(SBM_TIERS.keys()), value='Gold', label='Target').classes('w-32')
                 
                 with ui.column().classes('flex-grow'):
-                    # REMOVED label-value override so numbers show
                     slider_earn_rate = ui.slider(min=1, max=20, value=10).props('label-always color=yellow')
                     with ui.row().classes('justify-between w-full'):
                         ui.label('Earning Rate')
@@ -387,8 +384,8 @@ def show_simulator():
             with ui.row().classes('w-full gap-4 items-center'):
                 ui.icon('hub', color='white').classes('text-2xl')
                 ui.label('SIMULATION').classes('font-bold text-white w-24')
-                slider_num_sims = ui.slider(min=10, max=100, value=20).props('label-always color=white').classes('flex-grow')
-                slider_years = ui.slider(min=1, max=10, value=10).props('label-always color=blue').classes('flex-grow')
+                slider_num_sims = ui.slider(min=10, max=100, value=20).props('label-always color=cyan')
+                slider_years = ui.slider(min=1, max=10, value=10).props('label-always color=blue')
 
             # Row 4: Ecosystem
             with ui.row().classes('w-full gap-4 items-center'):
@@ -396,12 +393,9 @@ def show_simulator():
                 ui.label('ECOSYSTEM').classes('font-bold text-green-400 w-24')
                 slider_contrib_win = ui.slider(min=0, max=1000, value=200).props('label-always color=green').classes('flex-grow')
                 slider_contrib_loss = ui.slider(min=0, max=1000, value=100).props('label-always color=orange').classes('flex-grow')
-                
                 with ui.column().classes('gap-2'):
-                    # FIXED: Logic bug removed. Just define switches simply.
                     switch_luxury_tax = ui.switch('Tax').props('color=gold')
                     switch_luxury_tax.value = True
-                    
                     switch_holiday = ui.switch('Holiday').props('color=blue')
                     switch_holiday.value = True
 
