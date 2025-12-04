@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from .tier_params import TierConfig
 
@@ -17,18 +17,16 @@ class PlayMode(Enum):
 
 @dataclass
 class StrategyOverrides:
-    """Allows the Simulator to inject custom rules."""
     iron_gate_limit: int = 3
     stop_loss_units: int = 10
     profit_lock_units: int = 6
-    press_trigger_wins: int = 2 # 0=Flat, 1=After 1 win, 2=After 2 wins
+    press_trigger_wins: int = 2 
+    press_limit_capped: bool = True # True = Max 2/3/5 presses. False = Unlimited.
 
 @dataclass
 class SessionState:
     tier: TierConfig
-    # New: Optional Overrides for Research Mode
     overrides: Optional[StrategyOverrides] = None
-    
     current_shoe: int = 1
     hands_played_in_shoe: int = 0
     presses_this_shoe: int = 0
@@ -54,7 +52,7 @@ class BaccaratStrategist:
         if state.mode == PlayMode.STOPPED:
              return {'bet_amount': 0, 'reason': "SESSION STOPPED", 'mode': PlayMode.STOPPED}
 
-        # DETERMINE LIMITS (Use Overrides if present, else defaults)
+        # LIMITS
         if state.overrides:
             stop_limit = state.tier.base_unit * -state.overrides.stop_loss_units
             profit_limit = state.tier.base_unit * state.overrides.profit_lock_units
@@ -69,7 +67,7 @@ class BaccaratStrategist:
         if state.session_pnl >= profit_limit:
              return {'bet_amount': 0, 'reason': "PROFIT LOCK SECURED", 'mode': PlayMode.STOPPED}
         
-        # Shoe 3 Trailing Stop (Simplified for Research Mode)
+        # Shoe 3 Trailing Stop (Simplified)
         if state.current_shoe == 3:
             five_units = state.tier.base_unit * 5
             if state.shoe3_start_pnl >= five_units:
@@ -84,20 +82,29 @@ class BaccaratStrategist:
         current_base = state.tier.base_unit
         current_press = state.tier.press_unit
         
-        # Tripwire (Shoe 1) - Only active if NO overrides (Standard Doctrine)
         if not state.overrides and state.shoe1_tripwire_triggered:
             return {'bet_amount': 50, 'reason': "TRIPWIRE: Flat €50", 'mode': PlayMode.ACTIVE}
 
-        # Penalty Cooldown
         if state.penalty_cooldown > 0:
             return {'bet_amount': current_base, 'reason': f"RE-ENTRY ({state.penalty_cooldown})", 'mode': PlayMode.ACTIVE}
 
-        # Sniper / Flat Logic
-        can_press = state.presses_this_shoe < state.tier.max_presses_per_shoe
+        # Sniper Logic
+        # Default limits based on Tier level (Doctrine 1.0)
+        default_max_press = 2 if state.tier.level == 1 else (3 if state.tier.level == 2 else 5)
+        
+        # Override logic
+        if state.overrides:
+            if state.overrides.press_limit_capped:
+                max_press = default_max_press
+            else:
+                max_press = 999 # Unlimited
+        else:
+            max_press = default_max_press
+
+        can_press = state.presses_this_shoe < max_press
+        
         bet = current_base
         reason = "Base Bet"
-
-        # Determine Trigger
         trigger_wins = state.overrides.press_trigger_wins if state.overrides else 2
         
         if trigger_wins > 0 and state.consecutive_wins >= trigger_wins and can_press:
@@ -132,15 +139,12 @@ class BaccaratStrategist:
             state.consecutive_losses += 1
             state.consecutive_wins = 0
             
-            # IRON GATE LOGIC
             limit = state.overrides.iron_gate_limit if state.overrides else 3
-            
             if state.consecutive_losses >= limit:
                 state.mode = PlayMode.WATCHER
                 state.sniper_state = SniperState.RESET
                 return
 
-        # Tripwire Logic (Only for Standard Doctrine)
         if not state.overrides and state.current_shoe == 1 and not state.shoe1_tripwire_triggered:
             if state.session_pnl < (state.tier.stop_loss * 0.5):
                 state.shoe1_tripwire_triggered = True
