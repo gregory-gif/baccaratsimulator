@@ -105,7 +105,6 @@ class SimulationWorker:
         current_year_points = 0
         
         for m in range(total_months):
-            # Annual Point Reset
             if m > 0 and m % 12 == 0:
                 current_year_points = 0
 
@@ -194,6 +193,7 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
+            # Read Values from UI
             num_sims = int(slider_num_sims.value)
             years = int(slider_years.value)
             sessions_per_year = int(slider_frequency.value)
@@ -202,11 +202,10 @@ def show_simulator():
             contrib_win = int(slider_contrib_win.value)
             contrib_loss = int(slider_contrib_loss.value)
             
-            # Gold
             status_target = SBM_TIERS[select_status.value]
             earn_rate = float(slider_earn_rate.value)
             
-            # Toggles
+            # Read Toggles (Fixing the reference bug)
             use_ratchet = switch_ratchet.value
             use_tax = switch_luxury_tax.value
             use_holiday = switch_holiday.value
@@ -333,6 +332,11 @@ def show_simulator():
 
         with report_container:
             report_container.clear()
+            # FIXED: Safely accessing the switch values directly from the closure variables
+            # which are now properly assigned in the layout section below.
+            tax_status = "ON" if switch_luxury_tax.value else "OFF"
+            holiday_status = "ON" if switch_holiday.value else "OFF"
+            
             report_text = (
                 f"MONTE CARLO REPORT ({len(results)} Universes)\n"
                 f"----------------------------------------\n"
@@ -341,7 +345,7 @@ def show_simulator():
                 f"Net Life Result: €{net_life_result:.0f} (Avg)\n"
                 f"True Cost: €{avg_monthly_cost:.0f}/month\n"
                 f"Active Play: {active_pct:.1f}%\n"
-                f"Tax On: {switch_luxury_tax.value} | Holiday On: {switch_holiday.value}\n"
+                f"Tax On: {tax_status} | Holiday On: {holiday_status}\n"
             )
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.textarea(value=report_text).props('readonly autogrow input-class="font-mono text-xs"').classes('w-full')
@@ -355,4 +359,92 @@ def show_simulator():
             # Row 1: The Unified Ladder
             with ui.expansion('Tier Ladder Preview (Live)', icon='list').classes('w-full bg-slate-800 text-slate-300'):
                 ladder_grid = ui.aggrid({
-                    'columnDefs':
+                    'columnDefs': [
+                        {'headerName': 'Tier', 'field': 'tier', 'width': 80},
+                        {'headerName': 'Bet Size', 'field': 'bet', 'width': 100},
+                        {'headerName': 'Promotion GA', 'field': 'start', 'width': 120, 'cellStyle': {'font-weight': 'bold', 'color': '#4ade80'}},
+                        {'headerName': 'Risk %', 'field': 'risk', 'width': 100},
+                    ],
+                    'rowData': [],
+                }).classes('h-48 w-full theme-balham-dark')
+
+            # Row 2: Status Settings
+            with ui.row().classes('w-full gap-4 items-center'):
+                ui.icon('verified', color='yellow').classes('text-2xl')
+                ui.label('STATUS').classes('font-bold text-yellow-400 w-24')
+                select_status = ui.select(list(SBM_TIERS.keys()), value='Gold', label='Target').classes('w-32')
+                
+                with ui.column().classes('flex-grow'):
+                    # REMOVED label-value override so numbers show
+                    slider_earn_rate = ui.slider(min=1, max=20, value=10).props('label-always color=yellow')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Earning Rate')
+                        ui.label().bind_text_from(slider_earn_rate, 'value', lambda v: f'{v} pts/€100').classes('font-bold text-yellow-400')
+
+            ui.separator().classes('bg-slate-700')
+
+            # Row 3: Multiverse
+            with ui.row().classes('w-full gap-4 items-center'):
+                ui.icon('hub', color='white').classes('text-2xl')
+                ui.label('SIMULATION').classes('font-bold text-white w-24')
+                slider_num_sims = ui.slider(min=10, max=100, value=20).props('label-always color=white').classes('flex-grow')
+                slider_years = ui.slider(min=1, max=10, value=10).props('label-always color=blue').classes('flex-grow')
+
+            # Row 4: Ecosystem
+            with ui.row().classes('w-full gap-4 items-center'):
+                ui.icon('savings', color='green').classes('text-2xl')
+                ui.label('ECOSYSTEM').classes('font-bold text-green-400 w-24')
+                slider_contrib_win = ui.slider(min=0, max=1000, value=200).props('label-always color=green').classes('flex-grow')
+                slider_contrib_loss = ui.slider(min=0, max=1000, value=100).props('label-always color=orange').classes('flex-grow')
+                
+                with ui.column().classes('gap-2'):
+                    # FIXED: Logic bug removed. Just define switches simply.
+                    switch_luxury_tax = ui.switch('Tax').props('color=gold')
+                    switch_luxury_tax.value = True
+                    
+                    switch_holiday = ui.switch('Holiday').props('color=blue')
+                    switch_holiday.value = True
+
+            # Row 5: Tactics
+            with ui.row().classes('w-full gap-4 items-center'):
+                ui.icon('tune', color='purple').classes('text-2xl')
+                ui.label('TACTICS').classes('font-bold text-purple-400 w-24')
+                
+                with ui.column().classes('flex-grow'):
+                    slider_safety = ui.slider(min=10, max=60, value=20, on_change=update_ladder_preview).props('label-always color=orange')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Safety Buffer')
+                        ui.label().bind_text_from(slider_safety, 'value', lambda v: f'{v}x Unit').classes('font-bold text-orange-400')
+
+                slider_iron_gate = ui.slider(min=2, max=6, value=3).props('label-always color=purple').classes('flex-grow')
+                select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2).classes('w-32')
+                switch_capped = ui.switch('Cap Press').props('color=red')
+                switch_capped.value = True
+
+            # Row 6: Risk
+            with ui.row().classes('w-full gap-4 items-center'):
+                ui.icon('shield', color='red').classes('text-2xl')
+                ui.label('RISK').classes('font-bold text-red-400 w-24')
+                slider_stop_loss = ui.slider(min=5, max=30, value=8).props('label-always color=red').classes('flex-grow')
+                slider_profit = ui.slider(min=3, max=20, value=10).props('label-always color=green').classes('flex-grow')
+                switch_ratchet = ui.switch('Ratchet').props('color=gold')
+
+            ui.separator().classes('bg-slate-700')
+            
+            # Run
+            with ui.row().classes('w-full items-center justify-between'):
+                with ui.column():
+                    select_tier = ui.select({1: 'Tier 1 Start', 2: 'Tier 2 Start'}, value=1).classes('w-40')
+                    slider_frequency = ui.slider(min=9, max=50, value=9).props('label-always color=blue').classes('w-40 hidden')
+                
+                btn_sim = ui.button('RUN STATUS SIM', on_click=run_sim).props('icon=verified color=yellow text-color=black size=lg')
+        
+        label_stats = ui.label('Configure your strategy above...').classes('text-sm text-slate-500')
+        progress = ui.linear_progress().props('color=white').classes('mt-0')
+        progress.set_visibility(False)
+
+        stats_container = ui.column().classes('w-full')
+        chart_container = ui.card().classes('w-full bg-slate-900 p-4')
+        report_container = ui.column().classes('w-full')
+        
+        update_ladder_preview()
