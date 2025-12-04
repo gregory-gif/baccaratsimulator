@@ -205,7 +205,7 @@ def show_simulator():
                 'use_holiday': switch_holiday.value,
                 'safety': int(slider_safety.value),
                 'start_tier': int(select_tier.value),
-                'press_limit_capped': switch_capped.value # Added missing config
+                'press_limit_capped': switch_capped.value 
             }
             
             total_months = config['years'] * 12
@@ -246,7 +246,6 @@ def show_simulator():
                 label_stats.set_text(f"Simulating Universe {len(all_results)}/{config['num_sims']}")
 
             label_stats.set_text("Analyzing Data...")
-            # Pass the CONFIG dict to render_analysis
             render_analysis(all_results, config, start_ga)
             label_stats.set_text("Simulation Complete")
 
@@ -343,8 +342,8 @@ def show_simulator():
                 f"Start GA: €{start_ga:.0f} | Final GA: €{avg_final_ga:.0f}\n"
                 f"Net Life Result: €{net_life_result:.0f} (Avg)\n"
                 f"True Cost: €{avg_monthly_cost:.0f}/month\n"
-                f"Active Play: {active_pct:.1f}%\n"
-                f"Settings: Tax={tax_str}, Holiday={hol_str}, Ratchet={rat_str}, CapPress={cap_str}\n"
+                f"Active Play: {active_pct:.1f}% ({avg_insolvent:.1f} months insolvent)\n"
+                f"Settings: Tax={tax_str}, Holiday={hol_str}, Ratchet={rat_str}, CapPress={cap_str}, Safety={config['safety']}x\n"
             )
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.textarea(value=report_text).props('readonly autogrow input-class="font-mono text-xs"').classes('w-full')
@@ -355,17 +354,26 @@ def show_simulator():
         
         with ui.card().classes('w-full bg-slate-900 p-6 gap-4'):
             
-            # Row 1: The Unified Ladder
-            with ui.expansion('Tier Ladder Preview (Live)', icon='list').classes('w-full bg-slate-800 text-slate-300'):
-                ladder_grid = ui.aggrid({
-                    'columnDefs': [
-                        {'headerName': 'Tier', 'field': 'tier', 'width': 80},
-                        {'headerName': 'Bet Size', 'field': 'bet', 'width': 100},
-                        {'headerName': 'Promotion GA', 'field': 'start', 'width': 120, 'cellStyle': {'font-weight': 'bold', 'color': '#4ade80'}},
-                        {'headerName': 'Risk %', 'field': 'risk', 'width': 100},
-                    ],
-                    'rowData': [],
-                }).classes('h-48 w-full theme-balham-dark')
+            # Row 1: The Unified Ladder & Aggressiveness
+            with ui.row().classes('w-full gap-4 items-center'):
+                with ui.column().classes('flex-grow'):
+                    with ui.expansion('Tier Ladder Preview (Live)', icon='list').classes('w-full bg-slate-800 text-slate-300'):
+                        ladder_grid = ui.aggrid({
+                            'columnDefs': [
+                                {'headerName': 'Tier', 'field': 'tier', 'width': 80},
+                                {'headerName': 'Bet', 'field': 'bet', 'width': 80},
+                                {'headerName': 'Start GA', 'field': 'start', 'width': 100, 'cellStyle': {'font-weight': 'bold', 'color': '#4ade80'}},
+                                {'headerName': 'Risk %', 'field': 'risk', 'width': 90},
+                            ],
+                            'rowData': [],
+                        }).classes('h-48 w-full theme-balham-dark')
+                
+                # MOVED: Safety Slider is now here, next to the ladder it controls
+                with ui.column().classes('w-1/3'):
+                    slider_safety = ui.slider(min=10, max=60, value=20, on_change=update_ladder_preview).props('label-always color=orange')
+                    with ui.row().classes('justify-between w-full'):
+                        ui.label('Aggressiveness')
+                        ui.label().bind_text_from(slider_safety, 'value', lambda v: f'{v}x Unit').classes('font-bold text-orange-400')
 
             # Row 2: Status Settings
             with ui.row().classes('w-full gap-4 items-center'):
@@ -385,8 +393,8 @@ def show_simulator():
             with ui.row().classes('w-full gap-4 items-center'):
                 ui.icon('hub', color='white').classes('text-2xl')
                 ui.label('SIMULATION').classes('font-bold text-white w-24')
-                slider_num_sims = ui.slider(min=10, max=100, value=20).props('label-always color=cyan')
-                slider_years = ui.slider(min=1, max=10, value=10).props('label-always color=blue')
+                slider_num_sims = ui.slider(min=10, max=100, value=20).props('label-always color=cyan').classes('flex-grow')
+                slider_years = ui.slider(min=1, max=10, value=10).props('label-always color=blue').classes('flex-grow')
 
             # Row 4: Ecosystem
             with ui.row().classes('w-full gap-4 items-center'):
@@ -403,14 +411,9 @@ def show_simulator():
             # Row 5: Tactics
             with ui.row().classes('w-full gap-4 items-center'):
                 ui.icon('tune', color='purple').classes('text-2xl')
-                ui.label('TACTICS').classes('font-bold text-purple-400 w-24')
+                ui.label('STRATEGY').classes('font-bold text-purple-400 w-24')
                 
-                with ui.column().classes('flex-grow'):
-                    slider_safety = ui.slider(min=10, max=60, value=20, on_change=update_ladder_preview).props('label-always color=orange')
-                    with ui.row().classes('justify-between w-full'):
-                        ui.label('Safety Buffer')
-                        ui.label().bind_text_from(slider_safety, 'value', lambda v: f'{v}x Unit').classes('font-bold text-orange-400')
-
+                # Removed Safety Slider from here (Moved up)
                 slider_iron_gate = ui.slider(min=2, max=6, value=3).props('label-always color=purple').classes('flex-grow')
                 select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2).classes('w-32')
                 switch_capped = ui.switch('Cap Press').props('color=red')
