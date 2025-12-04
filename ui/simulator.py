@@ -20,9 +20,6 @@ class SimulationWorker:
     def run_session(current_ga: float, overrides: StrategyOverrides, tier_map: dict, use_ratchet: bool = False):
         tier = get_tier_for_ga(current_ga, tier_map)
         
-        # Safe Attribute Access
-        limit_capped = getattr(overrides, 'press_limit_capped', True)
-        
         session_overrides = overrides
         trigger_profit_amount = 0
         ratchet_triggered = False
@@ -34,7 +31,7 @@ class SimulationWorker:
                 stop_loss_units=overrides.stop_loss_units,
                 profit_lock_units=1000, 
                 press_trigger_wins=overrides.press_trigger_wins,
-                press_limit_capped=limit_capped
+                press_limit_capped=overrides.press_limit_capped
             )
         
         state = SessionState(tier=tier, overrides=session_overrides)
@@ -193,6 +190,7 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
+            # --- CONFIG ---
             config = {
                 'num_sims': int(slider_num_sims.value),
                 'years': int(slider_years.value),
@@ -292,6 +290,7 @@ def show_simulator():
         avg_monthly_cost = (avg_contrib - avg_tax) / total_months
         net_life_result = avg_final_ga + avg_tax - (start_ga + avg_contrib)
 
+        # 1. CHART
         with chart_container:
             chart_container.clear()
             fig = go.Figure()
@@ -306,6 +305,7 @@ def show_simulator():
             fig.update_layout(title='Monte Carlo Confidence Bands', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20), xaxis=dict(title='Months Passed', gridcolor='#334155'), yaxis=dict(title='Game Account (€)', gridcolor='#334155'), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             ui.plotly(fig).classes('w-full h-96')
 
+        # 2. METRICS
         with stats_container:
             stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
@@ -331,20 +331,18 @@ def show_simulator():
                     else:
                         ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
+        # 3. REPORT
         with report_container:
             report_container.clear()
             
-            # --- CRASH-PROOF REPORT GENERATOR ---
             try:
                 lines = []
                 lines.append(f"MONTE CARLO REPORT ({len(results)} Universes)")
                 lines.append("-" * 40)
                 
-                # Use .get() everywhere to prevent KeyErrors
                 t_name = config.get('status_target_name', 'N/A')
                 t_pts = config.get('status_target_pts', 0)
                 lines.append(f"Target: {t_name} ({t_pts:,.0f} pts)")
-                
                 lines.append(f"Start GA: €{start_ga:,.0f} | Final GA: €{avg_final_ga:,.0f}")
                 lines.append(f"Net Life Result: €{net_life_result:,.0f} (Avg)")
                 lines.append(f"True Cost: €{avg_monthly_cost:,.0f}/month")
@@ -488,6 +486,7 @@ def show_simulator():
             with ui.row().classes('w-full items-center justify-between'):
                 with ui.column():
                     select_tier = ui.select({1: 'Start Tier 1', 2: 'Start Tier 2'}, value=1).classes('w-40')
+                    slider_frequency = ui.slider(min=9, max=50, value=9).props('label-always color=blue').classes('w-40 hidden')
                 
                 btn_sim = ui.button('RUN STATUS SIM', on_click=run_sim).props('icon=verified color=yellow text-color=black size=lg')
         
