@@ -25,19 +25,22 @@ class SimulationWorker:
             won = False
             pnl_change = 0
             
-            # Bankers: 0.4586, Player: 0.4462, Tie: 0.0952
-            if rnd < 0.4586: 
+            # PROBABILITY MATRIX (Standard Punto Banco)
+            # Banker: 0.4586 | Player: 0.4462 | Tie: 0.0952
+            
+            if rnd < 0.4586: # Banker Win
                 won = True
-                pnl_change = decision['bet_amount'] 
-            elif rnd < (0.4586 + 0.4462): 
+                # REALISM FIX: 5% Commission on Banker Wins
+                pnl_change = decision['bet_amount'] * 0.95
+            elif rnd < (0.4586 + 0.4462): # Player Win
                 won = False
                 pnl_change = -decision['bet_amount']
             else: 
-                # Tie - Ignore and re-deal (standard road rules)
+                # Tie - Push
                 continue 
 
-            # CRITICAL FIX: Update state even if pnl_change is 0 (Watcher Mode)
-            # This prevents the Infinite Loop when betting €0.
+            # Update Engine
+            # Note: We track PnL as float now (e.g., +47.5)
             BaccaratStrategist.update_state_after_hand(state, won, pnl_change)
             history.append(state.session_pnl)
                 
@@ -86,8 +89,7 @@ def show_simulator():
             tier_level = int(select_tier.value)
             tier = TIER_MAP[tier_level]
             
-            # Professional Plan Configuration:
-            # We use large batches and run them in a separate thread.
+            # Threaded Batch Processing
             chunk_size = 50 
             
             for i in range(0, n_sessions, chunk_size):
@@ -96,7 +98,7 @@ def show_simulator():
                 
                 if current_batch_size <= 0: break
 
-                # Run heavy math in background thread (Non-Blocking)
+                # Run heavy math in background thread
                 batch_results = await asyncio.to_thread(SimulationWorker.run_batch, tier, current_batch_size)
                 results.extend(batch_results)
                     
@@ -136,6 +138,7 @@ def show_simulator():
             with ui.grid(columns=3).classes('w-full gap-4'):
                 with ui.card().classes('bg-slate-900 border-l-4 border-blue-500 p-4'):
                     ui.label('TOTAL PnL').classes('text-xs text-slate-500')
+                    # Format with commas and no decimals for readability
                     ui.label(f"€{total_pnl:,.0f}").classes('text-2xl font-bold text-white')
                 
                 with ui.card().classes('bg-slate-900 border-l-4 border-purple-500 p-4'):
@@ -152,7 +155,7 @@ def show_simulator():
         with chart_container:
             fig = go.Figure(data=[go.Histogram(x=data, nbinsx=30, marker_color='#00ff88')])
             fig.update_layout(
-                title='Session PnL Distribution',
+                title='Session PnL Distribution (Net Commission)',
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color='#94a3b8'),
