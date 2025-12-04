@@ -7,7 +7,7 @@ import numpy as np
 from engine.strategy_rules import SessionState, BaccaratStrategist, PlayMode, StrategyOverrides
 from engine.tier_params import TIER_MAP, TierConfig, generate_tier_map, get_tier_for_ga
 
-# SBM LOYALTY TIERS (Approximate Points)
+# SBM LOYALTY TIERS
 SBM_TIERS = {
     'Silver': 5000,
     'Gold': 22500,
@@ -99,22 +99,24 @@ class SimulationWorker:
         m_play_pnl = 0
         m_holidays = 0
         m_insolvent_months = 0 
+        m_total_volume = 0 
         
-        # Gold Tracking (Annual Reset Logic)
         gold_hit_year = -1
         current_year_points = 0
         
         for m in range(total_months):
-            # Reset Points Every 12 Months (SBM Rule)
+            # Annual Point Reset
             if m > 0 and m % 12 == 0:
                 current_year_points = 0
 
+            # A. Luxury Tax
             if use_tax and current_ga > 12500:
                 surplus = current_ga - 12500
                 tax = surplus * 0.25
                 current_ga -= tax
                 m_tax += tax
 
+            # B. Contribution
             should_contribute = True
             if use_holiday and current_ga >= 10000:
                 should_contribute = False
@@ -126,6 +128,7 @@ class SimulationWorker:
             else:
                 m_holidays += 1
             
+            # C. Play
             can_play = (current_ga >= 1500)
             if not can_play:
                 m_insolvent_months += 1
@@ -139,15 +142,14 @@ class SimulationWorker:
                     current_ga += pnl
                     m_play_pnl += pnl
                     sessions_played_total += 1
+                    m_total_volume += vol
                     last_session_won = (pnl > 0)
                     
-                    # Point Calculation: Volume * (Rate / 100)
                     points = vol * (earn_rate / 100)
                     current_year_points += points
             
-            # Check Status
             if gold_hit_year == -1 and current_year_points >= target_points:
-                gold_hit_year = (m // 12) + 1 # Record year number (1, 2, 3...)
+                gold_hit_year = (m // 12) + 1
             
             trajectory.append(current_ga)
             
@@ -159,6 +161,7 @@ class SimulationWorker:
             'play_pnl': m_play_pnl,
             'holidays': m_holidays,
             'insolvent_months': m_insolvent_months,
+            'total_volume': m_total_volume,
             'gold_year': gold_hit_year
         }
 
@@ -199,10 +202,11 @@ def show_simulator():
             contrib_win = int(slider_contrib_win.value)
             contrib_loss = int(slider_contrib_loss.value)
             
-            # Gold Params
+            # Gold
             status_target = SBM_TIERS[select_status.value]
             earn_rate = float(slider_earn_rate.value)
             
+            # Toggles
             use_ratchet = switch_ratchet.value
             use_tax = switch_luxury_tax.value
             use_holiday = switch_holiday.value
@@ -278,8 +282,6 @@ def show_simulator():
         avg_holidays = np.mean([r['holidays'] for r in results])
         avg_insolvent = np.mean([r['insolvent_months'] for r in results])
         
-        # GOLD ANALYSIS
-        # Count how many sims hit gold at least once
         gold_hits = [r['gold_year'] for r in results if r['gold_year'] != -1]
         gold_prob = (len(gold_hits) / len(results)) * 100
         avg_year_hit = np.mean(gold_hits) if gold_hits else 0
@@ -307,16 +309,15 @@ def show_simulator():
         with stats_container:
             stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
-                # GOLD CARD
                 with ui.card().classes('bg-slate-900 border-l-4 border-yellow-500 p-4'):
                     ui.label(f'{select_status.value.upper()} PROBABILITY').classes('text-xs text-slate-500')
                     g_color = 'text-green-400' if gold_prob > 80 else 'text-yellow-400'
                     if gold_prob < 50: g_color = 'text-red-400'
                     ui.label(f"{gold_prob:.1f}%").classes(f'text-3xl font-black {g_color}')
                     if gold_prob > 0:
-                        ui.label(f"Secured in Year {avg_year_hit:.1f} (Avg)").classes('text-xs text-slate-400')
+                        ui.label(f"Secured in Year {avg_year_hit:.1f}").classes('text-xs text-slate-400')
                     else:
-                        ui.label("Points Target Missed").classes('text-xs text-slate-500')
+                        ui.label("Missed").classes('text-xs text-slate-500')
 
                 with ui.card().classes('bg-slate-900 border-l-4 border-blue-500 p-4'):
                     ui.label('AVG FINAL GA').classes('text-xs text-slate-500')
@@ -335,13 +336,12 @@ def show_simulator():
             report_text = (
                 f"MONTE CARLO REPORT ({len(results)} Universes)\n"
                 f"----------------------------------------\n"
-                f"Target: {select_status.value} ({status_target:,.0f} Pts)\n"
-                f"Earning: {slider_earn_rate.value} pts/€100\n"
-                f"SUCCESS RATE: {gold_prob:.1f}%\n"
+                f"Status Target: {select_status.value}\n"
                 f"Start GA: €{start_ga:.0f} | Final GA: €{avg_final_ga:.0f}\n"
                 f"Net Life Result: €{net_life_result:.0f} (Avg)\n"
                 f"True Cost: €{avg_monthly_cost:.0f}/month\n"
                 f"Active Play: {active_pct:.1f}%\n"
+                f"Tax On: {switch_luxury_tax.value} | Holiday On: {switch_holiday.value}\n"
             )
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.textarea(value=report_text).props('readonly autogrow input-class="font-mono text-xs"').classes('w-full')
@@ -368,8 +368,7 @@ def show_simulator():
             with ui.row().classes('w-full gap-4 items-center'):
                 ui.icon('verified', color='yellow').classes('text-2xl')
                 ui.label('STATUS').classes('font-bold text-yellow-400 w-24')
-                
-                select_status = ui.select(list(SBM_TIERS.keys()), value='Gold', label='Target Status').classes('w-32')
+                select_status = ui.select(list(SBM_TIERS.keys()), value='Gold', label='Target').classes('w-32')
                 
                 with ui.column().classes('flex-grow'):
                     slider_earn_rate = ui.slider(min=1, max=20, value=10).props('label-always label-value="Pts/€100" color=yellow')
@@ -393,9 +392,10 @@ def show_simulator():
                 slider_contrib_win = ui.slider(min=0, max=1000, value=200).props('color=green').classes('flex-grow')
                 slider_contrib_loss = ui.slider(min=0, max=1000, value=100).props('color=orange').classes('flex-grow')
                 with ui.column().classes('gap-2'):
-                    switch_luxury_tax = ui.switch('Tax').props('color=gold').bind_value_to(switch_luxury_tax, 'value')
+                    # FIXED: Added logic to ensure switches appear
+                    switch_luxury_tax = ui.switch('Tax').props('color=gold')
                     switch_luxury_tax.value = True
-                    switch_holiday = ui.switch('Holiday').props('color=blue').bind_value_to(switch_holiday, 'value')
+                    switch_holiday = ui.switch('Holiday').props('color=blue')
                     switch_holiday.value = True
 
             # Row 5: Tactics
@@ -403,7 +403,6 @@ def show_simulator():
                 ui.icon('tune', color='purple').classes('text-2xl')
                 ui.label('TACTICS').classes('font-bold text-purple-400 w-24')
                 
-                # Safety Factor Slider
                 with ui.column().classes('flex-grow'):
                     slider_safety = ui.slider(min=10, max=60, value=20, on_change=update_ladder_preview).props('color=orange')
                     with ui.row().classes('justify-between w-full'):
@@ -412,7 +411,7 @@ def show_simulator():
 
                 slider_iron_gate = ui.slider(min=2, max=6, value=3).props('color=purple').classes('flex-grow')
                 select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2).classes('w-32')
-                switch_capped = ui.switch('Cap Press').props('color=red').bind_value_to(switch_capped, 'value')
+                switch_capped = ui.switch('Cap Press').props('color=red')
                 switch_capped.value = True
 
             # Row 6: Risk
