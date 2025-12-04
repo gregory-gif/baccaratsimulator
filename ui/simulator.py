@@ -66,6 +66,7 @@ class SimulationWorker:
         m_tax = 0
         m_play_pnl = 0
         m_holidays = 0
+        m_insolvent_months = 0 # New: Track time spent in penalty box
         
         for m in range(total_months):
             # A. LUXURY TAX
@@ -84,8 +85,14 @@ class SimulationWorker:
             else:
                 m_holidays += 1
             
-            # C. PLAY
+            # C. PLAY CHECK
+            # Rule: Resume play only if GA >= 1,500
             can_play = (current_ga >= 1500)
+            
+            if not can_play:
+                m_insolvent_months += 1
+            
+            # D. PLAY EXECUTION
             expected_sessions = int((m + 1) * (sessions_per_year / 12))
             sessions_due = expected_sessions - sessions_played_total
             
@@ -105,7 +112,8 @@ class SimulationWorker:
             'contrib': m_contrib,
             'tax': m_tax,
             'play_pnl': m_play_pnl,
-            'holidays': m_holidays
+            'holidays': m_holidays,
+            'insolvent_months': m_insolvent_months
         }
 
 def show_simulator():
@@ -132,8 +140,6 @@ def show_simulator():
             # Contributions
             contrib_win = int(slider_contrib_win.value)
             contrib_loss = int(slider_contrib_loss.value)
-            # We assume "monthly_contribution" for the logic is mostly dynamic now, 
-            # but we pass a placeholder if needed.
             
             overrides = StrategyOverrides(
                 iron_gate_limit=int(slider_iron_gate.value),
@@ -212,7 +218,13 @@ def show_simulator():
         avg_pnl = np.mean([r['play_pnl'] for r in results])
         avg_holidays = np.mean([r['holidays'] for r in results])
         
+        # Insolvency Metrics
+        avg_insolvent = np.mean([r['insolvent_months'] for r in results])
+        
         total_months = years * 12
+        insolvency_pct = (avg_insolvent / total_months) * 100
+        active_pct = 100 - insolvency_pct
+        
         avg_monthly_cost = (avg_contrib - avg_tax) / total_months
         net_life_result = avg_final_ga + avg_tax - (start_ga + avg_contrib)
 
@@ -276,9 +288,12 @@ def show_simulator():
                     ui.label(f"€{avg_final_ga:,.0f}").classes(f'text-2xl font-bold {color}')
                 
                 with ui.card().classes('bg-slate-900 border-l-4 border-purple-500 p-4'):
-                    ui.label('AVG CASINO PnL').classes('text-xs text-slate-500')
-                    color = 'text-green-400' if avg_pnl >= 0 else 'text-red-400'
-                    ui.label(f"€{avg_pnl:,.0f}").classes(f'text-2xl font-bold {color}')
+                    ui.label('ACTIVE PLAY TIME').classes('text-xs text-slate-500')
+                    # Color logic: High uptime is good
+                    color = 'text-green-400' if active_pct > 80 else 'text-yellow-400'
+                    if active_pct < 50: color = 'text-red-400'
+                    ui.label(f"{active_pct:.1f}%").classes(f'text-2xl font-bold {color}')
+                    ui.label(f"{avg_insolvent:.1f} months insolvent").classes('text-xs text-slate-600')
 
                 with ui.card().classes('bg-slate-900 border-l-4 border-yellow-500 p-4'):
                     ui.label('AVG MONTHLY COST').classes('text-xs text-slate-500')
@@ -300,6 +315,8 @@ def show_simulator():
                 f"Net Life Result: €{net_life_result:.0f} (Avg)\n"
                 f"True Cost: €{avg_monthly_cost:.0f}/month\n"
                 f"Casino Edge Impact: €{avg_pnl:.0f}\n"
+                f"Active Play Time: {active_pct:.1f}%\n"
+                f"Avg Insolvency: {avg_insolvent:.1f} months\n"
                 f"Avg Tax Withdrawn: €{avg_tax:.0f}\n"
                 f"Avg Contributed: €{avg_contrib:.0f}\n"
             )
