@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from .tier_params import TierConfig
 
@@ -17,16 +17,18 @@ class PlayMode(Enum):
 
 @dataclass
 class StrategyOverrides:
+    """Allows the Simulator to inject custom rules."""
     iron_gate_limit: int = 3
     stop_loss_units: int = 10
     profit_lock_units: int = 6
     press_trigger_wins: int = 2 
-    press_limit_capped: bool = True # True = Max 2/3/5 presses. False = Unlimited.
+    press_limit_capped: bool = True # <--- THIS IS THE CRITICAL MISSING VARIABLE
 
 @dataclass
 class SessionState:
     tier: TierConfig
     overrides: Optional[StrategyOverrides] = None
+    
     current_shoe: int = 1
     hands_played_in_shoe: int = 0
     presses_this_shoe: int = 0
@@ -67,7 +69,7 @@ class BaccaratStrategist:
         if state.session_pnl >= profit_limit:
              return {'bet_amount': 0, 'reason': "PROFIT LOCK SECURED", 'mode': PlayMode.STOPPED}
         
-        # Shoe 3 Trailing Stop (Simplified)
+        # Shoe 3 Trailing Stop
         if state.current_shoe == 3:
             five_units = state.tier.base_unit * 5
             if state.shoe3_start_pnl >= five_units:
@@ -89,15 +91,16 @@ class BaccaratStrategist:
             return {'bet_amount': current_base, 'reason': f"RE-ENTRY ({state.penalty_cooldown})", 'mode': PlayMode.ACTIVE}
 
         # Sniper Logic
-        # Default limits based on Tier level (Doctrine 1.0)
         default_max_press = 2 if state.tier.level == 1 else (3 if state.tier.level == 2 else 5)
         
         # Override logic
         if state.overrides:
-            if state.overrides.press_limit_capped:
+            # Use the variable safely
+            is_capped = getattr(state.overrides, 'press_limit_capped', True)
+            if is_capped:
                 max_press = default_max_press
             else:
-                max_press = 999 # Unlimited
+                max_press = 999 
         else:
             max_press = default_max_press
 
