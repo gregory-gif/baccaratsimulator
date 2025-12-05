@@ -32,7 +32,7 @@ class SimulationWorker:
                 stop_loss_units=overrides.stop_loss_units,
                 profit_lock_units=1000, 
                 press_trigger_wins=overrides.press_trigger_wins,
-                press_limit_capped=overrides.press_limit_capped
+                press_depth=overrides.press_depth
             )
         
         state = SessionState(tier=tier, overrides=session_overrides)
@@ -196,7 +196,7 @@ def show_simulator():
             'tac_safety': slider_safety.value,
             'tac_iron': slider_iron_gate.value,
             'tac_press': select_press.value,
-            'tac_cap': switch_capped.value,
+            'tac_depth': slider_press_depth.value, # NEW
             'risk_stop': slider_stop_loss.value,
             'risk_prof': slider_profit.value,
             'risk_ratch': switch_ratchet.value,
@@ -229,7 +229,7 @@ def show_simulator():
         slider_safety.value = config.get('tac_safety', 20)
         slider_iron_gate.value = config.get('tac_iron', 3)
         select_press.value = config.get('tac_press', 2)
-        switch_capped.value = config.get('tac_cap', True)
+        slider_press_depth.value = config.get('tac_depth', 3) # NEW
         slider_stop_loss.value = config.get('risk_stop', 8)
         slider_profit.value = config.get('risk_prof', 10)
         switch_ratchet.value = config.get('risk_ratch', False)
@@ -277,7 +277,7 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
-            # --- SAFE CONFIG CAPTURE ---
+            # --- CONFIG ---
             config = {
                 'num_sims': int(slider_num_sims.value),
                 'years': int(slider_years.value),
@@ -292,7 +292,7 @@ def show_simulator():
                 'use_holiday': switch_holiday.value,
                 'safety': int(slider_safety.value),
                 'start_tier': int(select_tier.value),
-                'press_limit_capped': switch_capped.value 
+                'press_depth': int(slider_press_depth.value) # NEW
             }
             
             total_months = config['years'] * 12
@@ -302,7 +302,7 @@ def show_simulator():
                 stop_loss_units=int(slider_stop_loss.value),
                 profit_lock_units=int(slider_profit.value),
                 press_trigger_wins=int(select_press.value),
-                press_limit_capped=switch_capped.value
+                press_depth=config['press_depth'] # NEW
             )
 
             temp_map = generate_tier_map(config['safety'])
@@ -350,7 +350,6 @@ def show_simulator():
     def render_analysis(results, config, start_ga, overrides):
         if not results: return
         
-        # 1. DATA PROCESSING
         trajectories = np.array([r['trajectory'] for r in results])
         months = list(range(trajectories.shape[1]))
         
@@ -378,7 +377,7 @@ def show_simulator():
         avg_monthly_cost = (avg_contrib - avg_tax) / total_months
         net_life_result = avg_final_ga + avg_tax - (start_ga + avg_contrib)
 
-        # 2. SCOREBOARD
+        # SCOREBOARD
         survivor_count = len([r for r in results if r['final_ga'] >= 1500])
         score_survival = (survivor_count / len(results)) * 100
         
@@ -402,21 +401,18 @@ def show_simulator():
             scoreboard_container.clear()
             with ui.card().classes('w-full bg-slate-800 p-4 border-l-8').style(f'border-color: {"#ef4444" if grade=="F" else "#4ade80"}'):
                 with ui.row().classes('w-full items-center justify-between'):
-                    # Score & Final Money
                     with ui.column():
                         ui.label('STRATEGY GRADE').classes('text-xs text-slate-400 font-bold tracking-widest')
                         ui.label(f"{grade}").classes(f'text-6xl font-black {g_col} leading-none')
                         ui.label(f"{total_score:.1f}% Score").classes(f'text-sm font-bold {g_col}')
                     
-                    # NEW: Avg Ending Bankroll Display
                     with ui.column().classes('items-center'):
                         ui.label('AVG ENDING BANKROLL').classes('text-[10px] text-slate-400 font-bold tracking-widest')
                         ui.label(f"€{avg_final_ga:,.0f}").classes('text-4xl font-black text-white leading-none')
                         pnl_color = 'text-green-400' if avg_final_ga >= start_ga else 'text-red-400'
                         pnl_prefix = '+' if avg_final_ga >= start_ga else ''
                         ui.label(f"{pnl_prefix}€{avg_final_ga - start_ga:,.0f}").classes(f'text-sm font-bold {pnl_color}')
-                    
-                    # Sub-Scores
+
                     with ui.grid(columns=4).classes('gap-x-8 gap-y-2'):
                         with ui.column().classes('items-center'):
                             ui.label('Gold Chase').classes('text-[10px] text-slate-500 uppercase')
@@ -431,7 +427,7 @@ def show_simulator():
                             ui.label('Active Play').classes('text-[10px] text-slate-500 uppercase')
                             ui.label(f"{score_time:.0f}%").classes('text-lg font-bold text-purple-400')
 
-        # 3. CHART
+        # CHART
         with chart_container:
             chart_container.clear()
             fig = go.Figure()
@@ -446,7 +442,7 @@ def show_simulator():
             fig.update_layout(title='Monte Carlo Confidence Bands', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20), xaxis=dict(title='Months Passed', gridcolor='#334155'), yaxis=dict(title='Game Account (€)', gridcolor='#334155'), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             ui.plotly(fig).classes('w-full h-96')
 
-        # 4. METRICS
+        # METRICS
         with stats_container:
             stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
@@ -472,7 +468,7 @@ def show_simulator():
                     else:
                         ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
-        # 5. REPORT (Safe Construction)
+        # REPORT
         with report_container:
             report_container.clear()
             try:
@@ -481,7 +477,6 @@ def show_simulator():
                 lines.append(f"STRATEGY GRADE: {grade} ({total_score:.1f}%)")
                 lines.append("-" * 40)
                 
-                # --- SAFE VARIABLE EXTRACTION ---
                 tgt_name = config.get('status_target_name', 'N/A')
                 tgt_pts = config.get('status_target_pts', 0)
                 
@@ -495,7 +490,11 @@ def show_simulator():
                 
                 st_iron = overrides.iron_gate_limit
                 st_press = overrides.press_trigger_wins
-                st_cap = "YES" if overrides.press_limit_capped else "NO"
+                
+                # NEW: Press Depth Display
+                depth = overrides.press_depth
+                st_depth = "Unlimited" if depth == 0 else f"{depth} steps"
+                
                 st_stop = overrides.stop_loss_units
                 st_prof = overrides.profit_lock_units
                 st_safe = config.get('safety', 0)
@@ -504,41 +503,21 @@ def show_simulator():
                 st_loss = config.get('contrib_loss', 0)
                 st_tax = "ON" if config.get('use_tax') else "OFF"
                 st_hol = "ON" if config.get('use_holiday') else "OFF"
-                
-                lines.append("-------------------- INPUTS --------------------")
-                lines.append("[SIMULATION]")
-                lines.append(f"Universes: {config.get('num_sims')}")
-                lines.append(f"Duration: {config.get('years')} Years")
-                lines.append(f"Frequency: {config.get('freq')} Sess/Yr")
-                lines.append(f"Start Tier: {config.get('start_tier')}")
-                
-                lines.append("\n[STRATEGY]")
-                lines.append(f"Safety Buffer: {st_safe}x")
-                lines.append(f"Iron Gate: {st_iron} Losses")
-                lines.append(f"Press Trigger: {st_press} Wins")
-                lines.append(f"Cap Press: {st_cap}")
-                
-                lines.append("\n[RISK]")
-                lines.append(f"Stop Loss: {st_stop} Units")
-                lines.append(f"Profit Target: {st_prof} Units")
-                lines.append(f"Ratchet Mode: {st_ratch}")
-                
-                lines.append("\n[ECOSYSTEM]")
-                lines.append(f"Contrib (Win): €{st_win}")
-                lines.append(f"Contrib (Loss): €{st_loss}")
-                lines.append(f"Luxury Tax: {st_tax}")
-                lines.append(f"Holiday Rule: {st_hol}")
-                
-                lines.append("\n[GOLD CHASE]")
-                lines.append(f"Target: {tgt_name} ({tgt_pts:,} pts)")
-                lines.append(f"Earn Rate: {config.get('earn_rate')} pts/€100")
 
-                lines.append("\n" + "-" * 20 + " RESULTS " + "-" * 20)
+                lines.append(f"Target: {tgt_name} ({tgt_pts:,.0f} pts)")
                 lines.append(f"Start GA: {s_ga} | Final GA: {f_ga}")
                 lines.append(f"Net Life Result: {n_res} (Avg)")
                 lines.append(f"True Cost: {t_cost}/month")
                 lines.append(f"Active Play: {act_play} ({ins_mo} months insolvent)")
                 lines.append(f"Gold Prob: {g_prob}")
+                
+                lines.append("-" * 20 + " INPUTS " + "-" * 20)
+                lines.append(f"Iron Gate: {st_iron} Losses")
+                lines.append(f"Press Logic: {st_press} wins (Depth: {st_depth})")
+                lines.append(f"Stop/Target: {st_stop}u / {st_prof}u (Ratchet: {st_ratch})")
+                lines.append(f"Safety Buffer: {st_safe}x")
+                lines.append(f"Contrib: Win=€{st_win}, Loss=€{st_loss}")
+                lines.append(f"Toggles: Tax={st_tax}, Hol={st_hol}")
                 
                 report_text = "\n".join(lines)
             except Exception as e:
@@ -547,9 +526,9 @@ def show_simulator():
 
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.button('COPY', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white').classes('absolute top-2 right-12 z-10')
-                ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>', sanitize=False) # Fixed HTML Safety
+                ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>', sanitize=False)
 
-    # --- LAYOUT (Fixed Visibility) ---
+    # --- LAYOUT ---
     with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
         ui.label('RESEARCH LAB: MY MONTE-CARLO').classes('text-2xl font-light text-slate-300')
         
@@ -571,7 +550,7 @@ def show_simulator():
 
             ui.separator().classes('bg-slate-700')
             
-            # Row 1: The Unified Ladder & Aggressiveness
+            # Row 1: Simulation
             with ui.row().classes('w-full gap-4 items-start'):
                 with ui.column().classes('flex-grow'):
                     ui.label('SIMULATION').classes('font-bold text-white mb-2')
@@ -658,8 +637,14 @@ def show_simulator():
                     lbl_iron.set_text('3 Losses')
                     
                     select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2, label='Press Logic').classes('w-full')
-                    switch_capped = ui.switch('Cap Press?').props('color=red')
-                    switch_capped.value = True
+                    
+                    # REPLACED: Cap Press Switch -> Press Depth Slider
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Press Depth (0=Inf)').classes('text-xs text-red-400')
+                        lbl_depth = ui.label()
+                    slider_press_depth = ui.slider(min=0, max=5, value=3).props('color=red')
+                    lbl_depth.bind_text_from(slider_press_depth, 'value', lambda v: 'Unlimited' if v==0 else f'{v} Steps')
+                    lbl_depth.set_text('3 Steps')
 
                 with ui.column():
                     ui.label('RISK & REWARD').classes('font-bold text-red-400')
