@@ -190,7 +190,6 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
-            # --- SAFE CONFIG CAPTURE ---
             config = {
                 'num_sims': int(slider_num_sims.value),
                 'years': int(slider_years.value),
@@ -375,7 +374,7 @@ def show_simulator():
                     else:
                         ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
-        # 5. REPORT (Using UI Code Block for Robustness)
+        # 5. REPORT (Safe Construction)
         with report_container:
             report_container.clear()
             try:
@@ -384,35 +383,59 @@ def show_simulator():
                 lines.append(f"STRATEGY GRADE: {grade} ({total_score:.1f}%)")
                 lines.append("-" * 40)
                 
-                t_name = config.get('status_target_name', 'N/A')
-                t_pts = config.get('status_target_pts', 0)
-                lines.append(f"Target: {t_name} ({t_pts:,.0f} pts)")
+                # --- SAFE VARIABLE EXTRACTION ---
+                # We extract everything into simple variables first
+                tgt_name = config.get('status_target_name', 'N/A')
+                tgt_pts = config.get('status_target_pts', 0)
                 
-                lines.append(f"Start GA: €{start_ga:,.0f} | Final GA: €{avg_final_ga:,.0f}")
-                lines.append(f"Net Life Result: €{net_life_result:,.0f} (Avg)")
-                lines.append(f"True Cost: €{avg_monthly_cost:,.0f}/month")
-                lines.append(f"Active Play: {active_pct:.1f}% ({avg_insolvent:.1f} months insolvent)")
-                lines.append(f"Gold Prob: {gold_prob:.1f}%")
+                # Format numbers safely
+                s_ga = f"€{start_ga:,.0f}"
+                f_ga = f"€{avg_final_ga:,.0f}"
+                n_res = f"€{net_life_result:,.0f}"
+                t_cost = f"€{avg_monthly_cost:,.0f}"
+                act_play = f"{active_pct:.1f}%"
+                ins_mo = f"{avg_insolvent:.1f}"
+                g_prob = f"{gold_prob:.1f}%"
+                
+                # Settings extraction
+                st_iron = overrides.iron_gate_limit
+                st_press = overrides.press_trigger_wins
+                st_cap = "YES" if overrides.press_limit_capped else "NO"
+                st_stop = overrides.stop_loss_units
+                st_prof = overrides.profit_lock_units
+                st_safe = config.get('safety', 0)
+                st_ratch = "ON" if config.get('use_ratchet') else "OFF"
+                st_win = config.get('contrib_win', 0)
+                st_loss = config.get('contrib_loss', 0)
+                st_tax = "ON" if config.get('use_tax') else "OFF"
+                st_hol = "ON" if config.get('use_holiday') else "OFF"
+
+                # Build Lines
+                lines.append(f"Target: {tgt_name} ({tgt_pts:,.0f} pts)")
+                lines.append(f"Start GA: {s_ga} | Final GA: {f_ga}")
+                lines.append(f"Net Life Result: {n_res} (Avg)")
+                lines.append(f"True Cost: {t_cost}/month")
+                lines.append(f"Active Play: {act_play} ({ins_mo} months insolvent)")
+                lines.append(f"Gold Prob: {g_prob}")
                 
                 lines.append("-" * 20 + " INPUTS " + "-" * 20)
-                lines.append(f"Iron Gate: {overrides.iron_gate_limit} Losses")
-                lines.append(f"Press Logic: {overrides.press_trigger_wins} wins to fire")
-                lines.append(f"Cap Press: {'YES' if overrides.press_limit_capped else 'NO'}")
-                lines.append(f"Stop/Target: {overrides.stop_loss_units}u / {overrides.profit_lock_units}u")
-                lines.append(f"Safety Buffer: {config.get('safety')}x")
-                lines.append(f"Ratchet: {'ON' if config.get('use_ratchet') else 'OFF'}")
-                lines.append(f"Contrib: Win=€{config.get('contrib_win')}, Loss=€{config.get('contrib_loss')}")
-                lines.append(f"Toggles: Tax={'ON' if config.get('use_tax') else 'OFF'}, Hol={'ON' if config.get('use_holiday') else 'OFF'}")
+                lines.append(f"Iron Gate: {st_iron} Losses")
+                lines.append(f"Press Logic: {st_press} wins (Capped: {st_cap})")
+                lines.append(f"Stop/Target: {st_stop}u / {st_prof}u (Ratchet: {st_ratch})")
+                lines.append(f"Safety Buffer: {st_safe}x")
+                lines.append(f"Contrib: Win=€{st_win}, Loss=€{st_loss}")
+                lines.append(f"Toggles: Tax={st_tax}, Hol={st_hol}")
                 
                 report_text = "\n".join(lines)
             except Exception as e:
                 report_text = f"Report Error: {str(e)}"
+                print(traceback.format_exc())
 
-            # Changed from ui.textarea to ui.code for reliable rendering
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
-                ui.row().classes('w-full justify-end').style('margin-top: -30px; margin-right: 40px; position: relative; z-index: 10;')
-                ui.button('COPY REPORT', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white')
-                ui.code(report_text, language='text').classes('w-full')
+                # Added Clipboard Button
+                ui.button('COPY', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white').classes('absolute top-2 right-12 z-10')
+                # Use PRE tag for raw text rendering
+                ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>')
 
     # --- LAYOUT (Fixed Visibility) ---
     with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
@@ -430,18 +453,21 @@ def show_simulator():
                         lbl_num_sims = ui.label()
                     slider_num_sims = ui.slider(min=10, max=100, value=20).props('color=cyan')
                     lbl_num_sims.bind_text_from(slider_num_sims, 'value', lambda v: f'{v}')
+                    lbl_num_sims.set_text('20') # Init value
                     
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Duration (Years)').classes('text-xs text-slate-400')
                         lbl_years = ui.label()
                     slider_years = ui.slider(min=1, max=10, value=10).props('color=blue')
                     lbl_years.bind_text_from(slider_years, 'value', lambda v: f'{v}')
+                    lbl_years.set_text('10') # Init value
                     
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Freq (Sess/Yr)').classes('text-xs text-slate-400')
                         lbl_frequency = ui.label()
                     slider_frequency = ui.slider(min=9, max=50, value=9).props('color=blue')
                     lbl_frequency.bind_text_from(slider_frequency, 'value', lambda v: f'{v}')
+                    lbl_frequency.set_text('9') # Init value
 
                 with ui.column().classes('w-1/2'):
                     ui.label('LADDER PREVIEW').classes('font-bold text-white mb-2')
@@ -466,6 +492,7 @@ def show_simulator():
                         lbl_contrib_win = ui.label()
                     slider_contrib_win = ui.slider(min=0, max=1000, value=200).props('color=green')
                     lbl_contrib_win.bind_text_from(slider_contrib_win, 'value', lambda v: f'€{v}')
+                    lbl_contrib_win.set_text('€200')
                 
                 with ui.column().classes('flex-grow'):
                     with ui.row().classes('w-full justify-between'):
@@ -473,6 +500,7 @@ def show_simulator():
                         lbl_contrib_loss = ui.label()
                     slider_contrib_loss = ui.slider(min=0, max=1000, value=100).props('color=orange')
                     lbl_contrib_loss.bind_text_from(slider_contrib_loss, 'value', lambda v: f'€{v}')
+                    lbl_contrib_loss.set_text('€100')
                 
                 with ui.column():
                     switch_luxury_tax = ui.switch('Tax').props('color=gold')
@@ -492,12 +520,14 @@ def show_simulator():
                         lbl_safety = ui.label()
                     slider_safety = ui.slider(min=10, max=60, value=20, on_change=update_ladder_preview).props('color=orange')
                     lbl_safety.bind_text_from(slider_safety, 'value', lambda v: f'{v}x')
+                    lbl_safety.set_text('20x')
                     
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Iron Gate Limit').classes('text-xs text-purple-400')
                         lbl_iron = ui.label()
                     slider_iron_gate = ui.slider(min=2, max=6, value=3).props('color=purple')
                     lbl_iron.bind_text_from(slider_iron_gate, 'value', lambda v: f'{v} Losses')
+                    lbl_iron.set_text('3 Losses')
                     
                     select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2, label='Press Logic').classes('w-full')
                     switch_capped = ui.switch('Cap Press?').props('color=red')
@@ -511,12 +541,14 @@ def show_simulator():
                         lbl_stop = ui.label()
                     slider_stop_loss = ui.slider(min=5, max=30, value=8).props('color=red')
                     lbl_stop.bind_text_from(slider_stop_loss, 'value', lambda v: f'{v} Units')
+                    lbl_stop.set_text('8 Units')
                     
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Target').classes('text-xs text-green-400')
                         lbl_profit = ui.label()
                     slider_profit = ui.slider(min=3, max=20, value=10).props('color=green')
                     lbl_profit.bind_text_from(slider_profit, 'value', lambda v: f'{v} Units')
+                    lbl_profit.set_text('10 Units')
                     
                     switch_ratchet = ui.switch('Ratchet Mode').props('color=gold')
                     
@@ -528,6 +560,7 @@ def show_simulator():
                         lbl_earn = ui.label()
                     slider_earn_rate = ui.slider(min=1, max=20, value=10).props('color=yellow')
                     lbl_earn.bind_text_from(slider_earn_rate, 'value', lambda v: f'{v} pts/€100')
+                    lbl_earn.set_text('10 pts/€100')
 
             ui.separator().classes('bg-slate-700')
             
