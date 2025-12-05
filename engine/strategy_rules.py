@@ -4,7 +4,6 @@ from typing import Optional
 from .tier_params import TierConfig
 
 # --- DEFINITIONS START HERE ---
-# (Do not import SessionState/BaccaratStrategist here, we define them below)
 
 class SniperState(Enum):
     WAIT = auto()
@@ -26,6 +25,11 @@ class StrategyOverrides:
     profit_lock_units: int = 6
     press_trigger_wins: int = 2 
     press_depth: int = 3 # 0=Unlimited, 1-5=Max Steps
+    
+    # NEW: Advanced Variables
+    ratchet_lock_pct: int = 50      # % of profit to lock (10-90)
+    tax_threshold: int = 12500      # GA threshold for Luxury Tax
+    tax_rate: int = 25              # % Tax rate on surplus
 
 @dataclass
 class SessionState:
