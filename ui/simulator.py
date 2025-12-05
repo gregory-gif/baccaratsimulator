@@ -190,7 +190,7 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
-            # --- CONFIG ---
+            # CONFIG CAPTURE
             config = {
                 'num_sims': int(slider_num_sims.value),
                 'years': int(slider_years.value),
@@ -263,6 +263,7 @@ def show_simulator():
     def render_analysis(results, config, start_ga):
         if not results: return
         
+        # 1. DATA AGGREGATION
         trajectories = np.array([r['trajectory'] for r in results])
         months = list(range(trajectories.shape[1]))
         
@@ -290,7 +291,68 @@ def show_simulator():
         avg_monthly_cost = (avg_contrib - avg_tax) / total_months
         net_life_result = avg_final_ga + avg_tax - (start_ga + avg_contrib)
 
-        # 1. CHART
+        # 2. SCOREBOARD CALCULATION
+        # Weights: Gold(30%), Survival(30%), Cost(20%), Playtime(20%)
+        
+        # Survival Score: % of universes that ended above insolvency (1500)
+        survivor_count = len([r for r in results if r['final_ga'] >= 1500])
+        score_survival = (survivor_count / len(results)) * 100
+        
+        # Cost Score: 100% if <= 0 cost. 0% if >= 500/mo cost. Linear in between.
+        if avg_monthly_cost <= 0:
+            score_cost = 100
+        else:
+            score_cost = max(0, 100 - (avg_monthly_cost / 5)) # 500/5 = 100 reduction
+            
+        # Playtime Score: active_pct
+        score_time = active_pct
+        
+        # Gold Score: gold_prob
+        score_gold = gold_prob
+        
+        # Weighted Total
+        total_score = (score_gold * 0.30) + (score_survival * 0.30) + (score_cost * 0.20) + (score_time * 0.20)
+        
+        # Grade Letter
+        if total_score >= 90: grade, g_col = "A", "text-green-400"
+        elif total_score >= 80: grade, g_col = "B", "text-blue-400"
+        elif total_score >= 70: grade, g_col = "C", "text-yellow-400"
+        elif total_score >= 60: grade, g_col = "D", "text-orange-400"
+        else: grade, g_col = "F", "text-red-600"
+
+        # 3. SCOREBOARD RENDER
+        with scoreboard_container:
+            scoreboard_container.clear()
+            with ui.card().classes('w-full bg-slate-800 p-4 border-l-8').style(f'border-color: {"#ef4444" if grade=="F" else "#4ade80"}'):
+                with ui.row().classes('w-full items-center justify-between'):
+                    with ui.column():
+                        ui.label('STRATEGY GRADE').classes('text-xs text-slate-400 font-bold tracking-widest')
+                        ui.label(f"{grade}").classes(f'text-6xl font-black {g_col} leading-none')
+                        ui.label(f"{total_score:.1f}% Score").classes(f'text-sm font-bold {g_col}')
+                    
+                    with ui.grid(columns=4).classes('gap-x-8 gap-y-2'):
+                        # Gold
+                        with ui.column().classes('items-center'):
+                            ui.label('Gold Chase').classes('text-[10px] text-slate-500 uppercase')
+                            ui.circular_progress(score_gold/100, size='40px', color='yellow', show_value=False)
+                            ui.label(f"{score_gold:.0f}%").classes('text-xs font-bold text-yellow-400')
+                        # Survival
+                        with ui.column().classes('items-center'):
+                            ui.label('Survival').classes('text-[10px] text-slate-500 uppercase')
+                            ui.circular_progress(score_survival/100, size='40px', color='blue', show_value=False)
+                            ui.label(f"{score_survival:.0f}%").classes('text-xs font-bold text-blue-400')
+                        # Cost
+                        with ui.column().classes('items-center'):
+                            ui.label('Cost Effic.').classes('text-[10px] text-slate-500 uppercase')
+                            ui.circular_progress(score_cost/100, size='40px', color='green', show_value=False)
+                            ui.label(f"{score_cost:.0f}%").classes('text-xs font-bold text-green-400')
+                        # Playtime
+                        with ui.column().classes('items-center'):
+                            ui.label('Active Play').classes('text-[10px] text-slate-500 uppercase')
+                            ui.circular_progress(score_time/100, size='40px', color='purple', show_value=False)
+                            ui.label(f"{score_time:.0f}%").classes('text-xs font-bold text-purple-400')
+
+        # 4. CHART
         with chart_container:
             chart_container.clear()
             fig = go.Figure()
@@ -302,65 +364,55 @@ def show_simulator():
             if config['use_holiday']: fig.add_hline(y=10000, line_dash="dash", line_color="yellow", annotation_text="Holiday")
             if config['use_tax']: fig.add_hline(y=12500, line_dash="dash", line_color="gold", annotation_text="Luxury Tax")
 
-            fig.update_layout(title='Monte Carlo Confidence Bands', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20), xaxis=dict(title='Months Passed', gridcolor='#334155'), yaxis=dict(title='Game Account (€)', gridcolor='#334155'), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+            fig.update_layout(
+                title='Monte Carlo Confidence Bands', 
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)', 
+                font=dict(color='#94a3b8'), 
+                margin=dict(l=20, r=20, t=40, b=20), 
+                xaxis=dict(title='Months Passed', gridcolor='#334155'), 
+                yaxis=dict(title='Game Account (€)', gridcolor='#334155'), 
+                showlegend=True, 
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
             ui.plotly(fig).classes('w-full h-96')
 
-        # 2. METRICS
-        with stats_container:
-            stats_container.clear()
-            with ui.grid(columns=3).classes('w-full gap-4'):
-                with ui.card().classes('bg-slate-900 border-l-4 border-yellow-500 p-4'):
-                    ui.label(f"{config['status_target_name'].upper()} PROB").classes('text-xs text-slate-500')
-                    g_color = 'text-green-400' if gold_prob > 80 else 'text-yellow-400'
-                    if gold_prob < 50: g_color = 'text-red-400'
-                    ui.label(f"{gold_prob:.1f}%").classes(f'text-3xl font-black {g_color}')
-                    if gold_prob > 0:
-                        ui.label(f"Hit Year {avg_year_hit:.1f}").classes('text-xs text-slate-400')
-                    else:
-                        ui.label("Missed").classes('text-xs text-slate-500')
-
-                with ui.card().classes('bg-slate-900 border-l-4 border-blue-500 p-4'):
-                    ui.label('AVG FINAL GA').classes('text-xs text-slate-500')
-                    color = 'text-green-400' if avg_final_ga >= start_ga else 'text-red-400'
-                    ui.label(f"€{avg_final_ga:,.0f}").classes(f'text-2xl font-bold {color}')
-                
-                with ui.card().classes('bg-slate-900 border-l-4 border-red-500 p-4'):
-                    ui.label('MONTHLY COST').classes('text-xs text-slate-500')
-                    if avg_monthly_cost <= 0:
-                        ui.label(f"+€{abs(avg_monthly_cost):.0f}").classes('text-2xl font-bold text-green-400')
-                    else:
-                        ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
-
-        # 3. REPORT
+        # 5. SAFE TEXT REPORT
         with report_container:
             report_container.clear()
-            
             try:
-                lines = []
-                lines.append(f"MONTE CARLO REPORT ({len(results)} Universes)")
-                lines.append("-" * 40)
-                
-                t_name = config.get('status_target_name', 'N/A')
-                t_pts = config.get('status_target_pts', 0)
-                lines.append(f"Target: {t_name} ({t_pts:,.0f} pts)")
-                lines.append(f"Start GA: €{start_ga:,.0f} | Final GA: €{avg_final_ga:,.0f}")
-                lines.append(f"Net Life Result: €{net_life_result:,.0f} (Avg)")
-                lines.append(f"True Cost: €{avg_monthly_cost:,.0f}/month")
-                lines.append(f"Active Play: {active_pct:.1f}% ({avg_insolvent:.1f} months insolvent)")
-                lines.append(f"Total Volume: €{avg_volume:,.0f}")
-                
-                tax = "ON" if config.get('use_tax', False) else "OFF"
-                hol = "ON" if config.get('use_holiday', False) else "OFF"
-                rat = "ON" if config.get('use_ratchet', False) else "OFF"
-                cap = "YES" if config.get('press_limit_capped', True) else "NO"
-                safe = config.get('safety', 0)
-                
-                lines.append(f"Settings: Tax={tax}, Holiday={hol}, Ratchet={rat}, CapPress={cap}, Safety={safe}x")
-                
+                # Safe Variables for Text Generation
+                # We format everything here to avoid f-string crashes
+                r_univ = len(results)
+                r_target = config.get('status_target_name', 'N/A')
+                r_pts = f"{config.get('status_target_pts', 0):,}"
+                r_start = f"€{start_ga:,.0f}"
+                r_final = f"€{avg_final_ga:,.0f}"
+                r_net = f"€{net_life_result:,.0f}"
+                r_cost = f"€{avg_monthly_cost:,.0f}"
+                r_play = f"{active_pct:.1f}%"
+                r_insol = f"{avg_insolvent:.1f}"
+                r_vol = f"€{avg_volume:,.0f}"
+                r_tax = "ON" if config.get('use_tax') else "OFF"
+                r_hol = "ON" if config.get('use_holiday') else "OFF"
+                r_rat = "ON" if config.get('use_ratchet') else "OFF"
+                r_cap = "YES" if config.get('press_limit_capped') else "NO"
+                r_saf = config.get('safety', 0)
+
+                lines = [
+                    f"MONTE CARLO REPORT ({r_univ} Universes)",
+                    "-" * 40,
+                    f"Target: {r_target} ({r_pts} pts)",
+                    f"Start GA: {r_start} | Final GA: {r_final}",
+                    f"Net Life Result: {r_net} (Avg)",
+                    f"True Cost: {r_cost}/month",
+                    f"Active Play: {r_play} ({r_insol} mo insolvent)",
+                    f"Total Volume: {r_vol}",
+                    f"Settings: Tax={r_tax}, Hol={r_hol}, Ratchet={r_rat}, Cap={r_cap}, Safety={r_saf}x"
+                ]
                 report_text = "\n".join(lines)
             except Exception as e:
-                report_text = f"Report Generation Failed: {str(e)}"
-                print(traceback.format_exc())
+                report_text = f"Report Error: {str(e)}"
 
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.textarea(value=report_text).props('readonly autogrow input-class="font-mono text-xs"').classes('w-full')
@@ -494,6 +546,8 @@ def show_simulator():
         progress = ui.linear_progress().props('color=green').classes('mt-0')
         progress.set_visibility(False)
 
+        # Place Scoreboard at the top of results
+        scoreboard_container = ui.column().classes('w-full mb-4')
         stats_container = ui.column().classes('w-full')
         chart_container = ui.card().classes('w-full bg-slate-900 p-4')
         report_container = ui.column().classes('w-full')
