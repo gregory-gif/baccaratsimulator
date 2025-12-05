@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from .tier_params import TierConfig
 
@@ -22,7 +22,12 @@ class StrategyOverrides:
     stop_loss_units: int = 10
     profit_lock_units: int = 6
     press_trigger_wins: int = 2 
-    press_limit_capped: bool = True # <--- CRITICAL: This variable must exist!
+    press_depth: int = 3 # 0=Unlimited, 1-5=Max Steps per streak
+    
+    # NEW: Ratchet & Ecosystem Controls
+    ratchet_lock_pct: float = 0.50  # Percentage of profit to lock (0.0 - 1.0)
+    luxury_tax_threshold: int = 12500 # Bankroll threshold to trigger tax
+    luxury_tax_rate: float = 0.25     # Tax rate on surplus (0.0 - 1.0)
 
 @dataclass
 class SessionState:
@@ -31,7 +36,10 @@ class SessionState:
     
     current_shoe: int = 1
     hands_played_in_shoe: int = 0
-    presses_this_shoe: int = 0
+    
+    # Replaced 'presses_this_shoe' with 'current_press_streak'
+    current_press_streak: int = 0 
+    
     session_pnl: float = 0.0
     shoe_pnls: dict[int, float] = None
     consecutive_wins: int = 0
@@ -91,17 +99,14 @@ class BaccaratStrategist:
             return {'bet_amount': current_base, 'reason': f"RE-ENTRY ({state.penalty_cooldown})", 'mode': PlayMode.ACTIVE}
 
         # Sniper Logic
-        default_max_press = 2 if state.tier.level == 1 else (3 if state.tier.level == 2 else 5)
+        max_depth = 999 # Default Unlimited
         
-        # Override logic
         if state.overrides:
-            # Use the variable safely (fallback to True if missing)
-            is_capped = getattr(state.overrides, 'press_limit_capped', True)
-            max_press = default_max_press if is_capped else 999
-        else:
-            max_press = default_max_press
-
-        can_press = state.presses_this_shoe < max_press
+            # 0 means Unlimited, otherwise specific step count
+            if state.overrides.press_depth > 0:
+                max_depth = state.overrides.press_depth
+        
+        can_press = state.current_press_streak < max_depth
         
         bet = current_base
         reason = "Base Bet"
@@ -109,7 +114,7 @@ class BaccaratStrategist:
         
         if trigger_wins > 0 and state.consecutive_wins >= trigger_wins and can_press:
             bet = current_press
-            reason = "Press Bet"
+            reason = f"Press Bet ({state.current_press_streak + 1}/{max_depth})"
         
         return {'bet_amount': bet, 'reason': reason, 'mode': PlayMode.ACTIVE}
 
@@ -132,12 +137,15 @@ class BaccaratStrategist:
             state.consecutive_losses = 0
             if state.penalty_cooldown > 0:
                 state.penalty_cooldown -= 1
+            
+            # Track Press Streak
             if amount_won > state.tier.base_unit:
-                state.presses_this_shoe += 1
+                state.current_press_streak += 1
             
         else:
             state.consecutive_losses += 1
             state.consecutive_wins = 0
+            state.current_press_streak = 0 # Reset Press Steps on Loss
             
             limit = state.overrides.iron_gate_limit if state.overrides else 3
             if state.consecutive_losses >= limit:
