@@ -6,7 +6,6 @@ import traceback
 import numpy as np
 from engine.strategy_rules import SessionState, BaccaratStrategist, PlayMode, StrategyOverrides
 from engine.tier_params import TIER_MAP, TierConfig, generate_tier_map, get_tier_for_ga
-from utils.persistence import load_profile, save_profile  # <--- Added Persistence
 
 # SBM LOYALTY TIERS
 SBM_TIERS = {
@@ -165,94 +164,6 @@ class SimulationWorker:
 def show_simulator():
     running = False
     
-    # --- LIBRARY FUNCTIONS ---
-    def load_saved_strategies():
-        profile = load_profile()
-        return profile.get('saved_strategies', {})
-
-    def update_strategy_list():
-        saved = load_saved_strategies()
-        select_saved.options = list(saved.keys())
-        select_saved.update()
-
-    def save_current_strategy():
-        name = input_name.value
-        if not name:
-            ui.notify('Please enter a name for this strategy', type='warning')
-            return
-        
-        profile = load_profile()
-        if 'saved_strategies' not in profile:
-            profile['saved_strategies'] = {}
-            
-        # Capture current state
-        config = {
-            'sim_num': slider_num_sims.value,
-            'sim_years': slider_years.value,
-            'sim_freq': slider_frequency.value,
-            'eco_win': slider_contrib_win.value,
-            'eco_loss': slider_contrib_loss.value,
-            'eco_tax': switch_luxury_tax.value,
-            'eco_hol': switch_holiday.value,
-            'tac_safety': slider_safety.value,
-            'tac_iron': slider_iron_gate.value,
-            'tac_press': select_press.value,
-            'tac_cap': switch_capped.value,
-            'risk_stop': slider_stop_loss.value,
-            'risk_prof': slider_profit.value,
-            'risk_ratch': switch_ratchet.value,
-            'gold_stat': select_status.value,
-            'gold_earn': slider_earn_rate.value,
-            'start_tier': select_tier.value
-        }
-        
-        profile['saved_strategies'][name] = config
-        save_profile(profile)
-        ui.notify(f'Strategy "{name}" saved successfully!', type='positive')
-        update_strategy_list()
-        input_name.value = ''
-
-    def load_selected_strategy():
-        name = select_saved.value
-        if not name: return
-        
-        saved = load_saved_strategies()
-        config = saved.get(name)
-        if not config: return
-        
-        # Apply values
-        slider_num_sims.value = config.get('sim_num', 20)
-        slider_years.value = config.get('sim_years', 10)
-        slider_frequency.value = config.get('sim_freq', 9)
-        slider_contrib_win.value = config.get('eco_win', 200)
-        slider_contrib_loss.value = config.get('eco_loss', 100)
-        switch_luxury_tax.value = config.get('eco_tax', True)
-        switch_holiday.value = config.get('eco_hol', True)
-        slider_safety.value = config.get('tac_safety', 20)
-        slider_iron_gate.value = config.get('tac_iron', 3)
-        select_press.value = config.get('tac_press', 2)
-        switch_capped.value = config.get('tac_cap', True)
-        slider_stop_loss.value = config.get('risk_stop', 8)
-        slider_profit.value = config.get('risk_prof', 10)
-        switch_ratchet.value = config.get('risk_ratch', False)
-        select_status.value = config.get('gold_stat', 'Gold')
-        slider_earn_rate.value = config.get('gold_earn', 10)
-        select_tier.value = config.get('start_tier', 1)
-        
-        ui.notify(f'Loaded strategy: {name}', type='info')
-
-    def delete_selected_strategy():
-        name = select_saved.value
-        if not name: return
-        
-        profile = load_profile()
-        if 'saved_strategies' in profile and name in profile['saved_strategies']:
-            del profile['saved_strategies'][name]
-            save_profile(profile)
-            ui.notify(f'Deleted: {name}', type='negative')
-            select_saved.value = None
-            update_strategy_list()
-
     def update_ladder_preview():
         factor = slider_safety.value
         t_map = generate_tier_map(factor)
@@ -464,7 +375,7 @@ def show_simulator():
                     else:
                         ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
-        # 5. REPORT
+        # 5. REPORT (Using UI Code Block for Robustness)
         with report_container:
             report_container.clear()
             try:
@@ -497,31 +408,17 @@ def show_simulator():
             except Exception as e:
                 report_text = f"Report Error: {str(e)}"
 
+            # Changed from ui.textarea to ui.code for reliable rendering
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
-                ui.textarea(value=report_text).props('readonly autogrow input-class="font-mono text-xs"').classes('w-full')
+                ui.row().classes('w-full justify-end').style('margin-top: -30px; margin-right: 40px; position: relative; z-index: 10;')
+                ui.button('COPY REPORT', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white')
+                ui.code(report_text, language='text').classes('w-full')
 
     # --- LAYOUT (Fixed Visibility) ---
     with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
         ui.label('RESEARCH LAB: MY MONTE-CARLO').classes('text-2xl font-light text-slate-300')
         
         with ui.card().classes('w-full bg-slate-900 p-6 gap-4'):
-            
-            # --- STRATEGY LIBRARY ---
-            with ui.expansion('STRATEGY LIBRARY (Load/Save)', icon='save').classes('w-full bg-slate-800 text-slate-300 mb-4'):
-                with ui.column().classes('w-full gap-4'):
-                    with ui.row().classes('w-full items-center gap-4'):
-                        input_name = ui.input('Save Name').props('dark').classes('flex-grow')
-                        ui.button('SAVE', on_click=save_current_strategy).props('icon=save color=green')
-                    
-                    with ui.row().classes('w-full items-center gap-4'):
-                        select_saved = ui.select([], label='Saved Strategies').props('dark').classes('flex-grow')
-                        ui.button('LOAD', on_click=load_selected_strategy).props('icon=file_upload color=blue')
-                        ui.button('DELETE', on_click=delete_selected_strategy).props('icon=delete color=red')
-                    
-                    # Refresh list on load
-                    update_strategy_list()
-
-            ui.separator().classes('bg-slate-700')
             
             # Row 1: The Unified Ladder & Aggressiveness
             with ui.row().classes('w-full gap-4 items-start'):
