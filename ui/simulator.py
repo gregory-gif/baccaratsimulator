@@ -402,7 +402,7 @@ def show_simulator():
             scoreboard_container.clear()
             with ui.card().classes('w-full bg-slate-800 p-4 border-l-8').style(f'border-color: {"#ef4444" if grade=="F" else "#4ade80"}'):
                 with ui.row().classes('w-full items-center justify-between'):
-                    # Modified Grading Column to include Final GA
+                    # Score & Final Money
                     with ui.column():
                         ui.label('STRATEGY GRADE').classes('text-xs text-slate-400 font-bold tracking-widest')
                         ui.label(f"{grade}").classes(f'text-6xl font-black {g_col} leading-none')
@@ -415,8 +415,8 @@ def show_simulator():
                         pnl_color = 'text-green-400' if avg_final_ga >= start_ga else 'text-red-400'
                         pnl_prefix = '+' if avg_final_ga >= start_ga else ''
                         ui.label(f"{pnl_prefix}€{avg_final_ga - start_ga:,.0f}").classes(f'text-sm font-bold {pnl_color}')
-
-                    # Metrics Grid
+                    
+                    # Sub-Scores
                     with ui.grid(columns=4).classes('gap-x-8 gap-y-2'):
                         with ui.column().classes('items-center'):
                             ui.label('Gold Chase').classes('text-[10px] text-slate-500 uppercase')
@@ -481,7 +481,6 @@ def show_simulator():
                 lines.append(f"STRATEGY GRADE: {grade} ({total_score:.1f}%)")
                 lines.append("-" * 40)
                 
-                # --- SAFE VARIABLE EXTRACTION ---
                 tgt_name = config.get('status_target_name', 'N/A')
                 tgt_pts = config.get('status_target_pts', 0)
                 
@@ -527,7 +526,7 @@ def show_simulator():
 
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
                 ui.button('COPY', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white').classes('absolute top-2 right-12 z-10')
-                ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>')
+                ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>', sanitize=False) # Fixed HTML Safety
 
     # --- LAYOUT (Fixed Visibility) ---
     with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
