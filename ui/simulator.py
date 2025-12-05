@@ -481,6 +481,7 @@ def show_simulator():
                 lines.append(f"STRATEGY GRADE: {grade} ({total_score:.1f}%)")
                 lines.append("-" * 40)
                 
+                # --- SAFE VARIABLE EXTRACTION ---
                 tgt_name = config.get('status_target_name', 'N/A')
                 tgt_pts = config.get('status_target_pts', 0)
                 
@@ -503,21 +504,41 @@ def show_simulator():
                 st_loss = config.get('contrib_loss', 0)
                 st_tax = "ON" if config.get('use_tax') else "OFF"
                 st_hol = "ON" if config.get('use_holiday') else "OFF"
+                
+                lines.append("-------------------- INPUTS --------------------")
+                lines.append("[SIMULATION]")
+                lines.append(f"Universes: {config.get('num_sims')}")
+                lines.append(f"Duration: {config.get('years')} Years")
+                lines.append(f"Frequency: {config.get('freq')} Sess/Yr")
+                lines.append(f"Start Tier: {config.get('start_tier')}")
+                
+                lines.append("\n[STRATEGY]")
+                lines.append(f"Safety Buffer: {st_safe}x")
+                lines.append(f"Iron Gate: {st_iron} Losses")
+                lines.append(f"Press Trigger: {st_press} Wins")
+                lines.append(f"Cap Press: {st_cap}")
+                
+                lines.append("\n[RISK]")
+                lines.append(f"Stop Loss: {st_stop} Units")
+                lines.append(f"Profit Target: {st_prof} Units")
+                lines.append(f"Ratchet Mode: {st_ratch}")
+                
+                lines.append("\n[ECOSYSTEM]")
+                lines.append(f"Contrib (Win): €{st_win}")
+                lines.append(f"Contrib (Loss): €{st_loss}")
+                lines.append(f"Luxury Tax: {st_tax}")
+                lines.append(f"Holiday Rule: {st_hol}")
+                
+                lines.append("\n[GOLD CHASE]")
+                lines.append(f"Target: {tgt_name} ({tgt_pts:,} pts)")
+                lines.append(f"Earn Rate: {config.get('earn_rate')} pts/€100")
 
-                lines.append(f"Target: {tgt_name} ({tgt_pts:,.0f} pts)")
+                lines.append("\n" + "-" * 20 + " RESULTS " + "-" * 20)
                 lines.append(f"Start GA: {s_ga} | Final GA: {f_ga}")
                 lines.append(f"Net Life Result: {n_res} (Avg)")
                 lines.append(f"True Cost: {t_cost}/month")
                 lines.append(f"Active Play: {act_play} ({ins_mo} months insolvent)")
                 lines.append(f"Gold Prob: {g_prob}")
-                
-                lines.append("-" * 20 + " INPUTS " + "-" * 20)
-                lines.append(f"Iron Gate: {st_iron} Losses")
-                lines.append(f"Press Logic: {st_press} wins (Capped: {st_cap})")
-                lines.append(f"Stop/Target: {st_stop}u / {st_prof}u (Ratchet: {st_ratch})")
-                lines.append(f"Safety Buffer: {st_safe}x")
-                lines.append(f"Contrib: Win=€{st_win}, Loss=€{st_loss}")
-                lines.append(f"Toggles: Tax={st_tax}, Hol={st_hol}")
                 
                 report_text = "\n".join(lines)
             except Exception as e:
