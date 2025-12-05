@@ -165,7 +165,7 @@ class SimulationWorker:
 def show_simulator():
     running = False
     
-    # --- STRATEGY LIBRARY FUNCTIONS ---
+    # --- STRATEGY LIBRARY FUNCTIONS (Restored) ---
     def load_saved_strategies():
         profile = load_profile()
         return profile.get('saved_strategies', {})
@@ -196,7 +196,7 @@ def show_simulator():
             'tac_safety': slider_safety.value,
             'tac_iron': slider_iron_gate.value,
             'tac_press': select_press.value,
-            'tac_depth': slider_press_depth.value, # NEW
+            'tac_depth': slider_press_depth.value, # Press Depth
             'risk_stop': slider_stop_loss.value,
             'risk_prof': slider_profit.value,
             'risk_ratch': switch_ratchet.value,
@@ -229,7 +229,14 @@ def show_simulator():
         slider_safety.value = config.get('tac_safety', 20)
         slider_iron_gate.value = config.get('tac_iron', 3)
         select_press.value = config.get('tac_press', 2)
-        slider_press_depth.value = config.get('tac_depth', 3) # NEW
+        
+        # Restore Press Depth (Default 0/Unlimited if missing)
+        depth = config.get('tac_depth', 0)
+        # Backward compatibility: check for old 'tac_cap' bool
+        if 'tac_cap' in config and 'tac_depth' not in config:
+             depth = 3 if config['tac_cap'] else 0
+        slider_press_depth.value = depth
+
         slider_stop_loss.value = config.get('risk_stop', 8)
         slider_profit.value = config.get('risk_prof', 10)
         switch_ratchet.value = config.get('risk_ratch', False)
@@ -350,6 +357,7 @@ def show_simulator():
     def render_analysis(results, config, start_ga, overrides):
         if not results: return
         
+        # 1. DATA PROCESSING
         trajectories = np.array([r['trajectory'] for r in results])
         months = list(range(trajectories.shape[1]))
         
@@ -377,7 +385,7 @@ def show_simulator():
         avg_monthly_cost = (avg_contrib - avg_tax) / total_months
         net_life_result = avg_final_ga + avg_tax - (start_ga + avg_contrib)
 
-        # SCOREBOARD
+        # 2. SCOREBOARD
         survivor_count = len([r for r in results if r['final_ga'] >= 1500])
         score_survival = (survivor_count / len(results)) * 100
         
@@ -401,18 +409,21 @@ def show_simulator():
             scoreboard_container.clear()
             with ui.card().classes('w-full bg-slate-800 p-4 border-l-8').style(f'border-color: {"#ef4444" if grade=="F" else "#4ade80"}'):
                 with ui.row().classes('w-full items-center justify-between'):
+                    # Score & Final Money
                     with ui.column():
                         ui.label('STRATEGY GRADE').classes('text-xs text-slate-400 font-bold tracking-widest')
                         ui.label(f"{grade}").classes(f'text-6xl font-black {g_col} leading-none')
                         ui.label(f"{total_score:.1f}% Score").classes(f'text-sm font-bold {g_col}')
                     
+                    # NEW: Avg Ending Bankroll Display
                     with ui.column().classes('items-center'):
                         ui.label('AVG ENDING BANKROLL').classes('text-[10px] text-slate-400 font-bold tracking-widest')
                         ui.label(f"€{avg_final_ga:,.0f}").classes('text-4xl font-black text-white leading-none')
                         pnl_color = 'text-green-400' if avg_final_ga >= start_ga else 'text-red-400'
                         pnl_prefix = '+' if avg_final_ga >= start_ga else ''
                         ui.label(f"{pnl_prefix}€{avg_final_ga - start_ga:,.0f}").classes(f'text-sm font-bold {pnl_color}')
-
+                    
+                    # Sub-Scores
                     with ui.grid(columns=4).classes('gap-x-8 gap-y-2'):
                         with ui.column().classes('items-center'):
                             ui.label('Gold Chase').classes('text-[10px] text-slate-500 uppercase')
@@ -427,7 +438,7 @@ def show_simulator():
                             ui.label('Active Play').classes('text-[10px] text-slate-500 uppercase')
                             ui.label(f"{score_time:.0f}%").classes('text-lg font-bold text-purple-400')
 
-        # CHART
+        # 3. CHART
         with chart_container:
             chart_container.clear()
             fig = go.Figure()
@@ -442,7 +453,7 @@ def show_simulator():
             fig.update_layout(title='Monte Carlo Confidence Bands', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20), xaxis=dict(title='Months Passed', gridcolor='#334155'), yaxis=dict(title='Game Account (€)', gridcolor='#334155'), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             ui.plotly(fig).classes('w-full h-96')
 
-        # METRICS
+        # 4. METRICS
         with stats_container:
             stats_container.clear()
             with ui.grid(columns=3).classes('w-full gap-4'):
@@ -468,7 +479,7 @@ def show_simulator():
                     else:
                         ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
-        # REPORT
+        # 5. REPORT (Safe Construction)
         with report_container:
             report_container.clear()
             try:
@@ -491,7 +502,7 @@ def show_simulator():
                 st_iron = overrides.iron_gate_limit
                 st_press = overrides.press_trigger_wins
                 
-                # NEW: Press Depth Display
+                # Press Depth Display
                 depth = overrides.press_depth
                 st_depth = "Unlimited" if depth == 0 else f"{depth} steps"
                 
