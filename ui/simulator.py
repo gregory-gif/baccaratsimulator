@@ -22,15 +22,14 @@ class SimulationWorker:
         tier = get_tier_for_ga(current_ga, tier_map)
         
         session_overrides = overrides
-        trigger_profit_amount = 0
-        ratchet_triggered = False
         
+        # If Ratchet is ON, we disable the engine's generic profit cap
+        # so we can handle the "Human Math" steps manually below.
         if use_ratchet:
-            trigger_profit_amount = overrides.profit_lock_units * tier.base_unit
             session_overrides = StrategyOverrides(
                 iron_gate_limit=overrides.iron_gate_limit,
                 stop_loss_units=overrides.stop_loss_units,
-                profit_lock_units=1000, 
+                profit_lock_units=1000, # Infinite ceiling for engine, handled manually
                 press_trigger_wins=overrides.press_trigger_wins,
                 press_depth=overrides.press_depth
             )
@@ -38,6 +37,10 @@ class SimulationWorker:
         state = SessionState(tier=tier, overrides=session_overrides)
         state.current_shoe = 1
         volume = 0 
+        
+        # RATCHET STATE
+        current_lock_units = 0
+        ratchet_active = False
         
         while state.current_shoe <= 3 and state.mode != PlayMode.STOPPED:
             decision = BaccaratStrategist.get_next_decision(state, ytd_pnl=0.0)
@@ -48,18 +51,35 @@ class SimulationWorker:
             bet = decision['bet_amount']
             volume += bet
             
+            # --- THE "HUMAN MATH" RATCHET (Doctrine 3.2) ---
             if use_ratchet:
-                if not ratchet_triggered and state.session_pnl >= trigger_profit_amount:
-                    ratchet_triggered = True
+                current_units = state.session_pnl / tier.base_unit
                 
-                # Dynamic Ratchet Lock
-                # Lock % of the Trigger Amount
-                lock_pct = overrides.ratchet_lock_pct / 100.0
-                lock_floor = trigger_profit_amount * lock_pct
-                
-                if ratchet_triggered and state.session_pnl <= lock_floor:
+                # 1. CHECK FOR PROMOTION (The Steps)
+                if current_units >= 20: 
+                    # 4TH LOCK: Reach +20 Units -> Color up!
                     break 
+                elif current_units >= 16:
+                    # 3RD LOCK: Reach +16 -> Lock +7
+                    ratchet_active = True
+                    current_lock_units = 7
+                elif current_units >= 12:
+                    # 2ND LOCK: Reach +12 -> Lock +5
+                    ratchet_active = True
+                    current_lock_units = 5
+                elif current_units >= 8:
+                    # 1ST LOCK: Reach +8 -> Lock +3
+                    ratchet_active = True
+                    current_lock_units = 3
+                
+                # 2. CHECK FOR DEMOTION (The Exit)
+                # If we drop back to the Locked Number -> QUIT
+                if ratchet_active:
+                    lock_value = current_lock_units * tier.base_unit
+                    if state.session_pnl <= lock_value:
+                        break
 
+            # Simulate Hand
             rnd = random.random()
             won = False
             pnl_change = 0
@@ -115,29 +135,26 @@ class SimulationWorker:
             if m > 0 and m % 12 == 0:
                 current_year_points = 0
 
-            # A. Luxury Tax
-            tax_thresh = overrides.tax_threshold
-            tax_rate = overrides.tax_rate / 100.0
-            
-            if use_tax and current_ga > tax_thresh:
-                surplus = current_ga - tax_thresh
-                tax = surplus * tax_rate
+            # A. Luxury Tax (100% of Surplus per Doctrine 3.2)
+            if use_tax and current_ga > 12500:
+                surplus = current_ga - 12500
+                tax = surplus * 1.0 # Withdraw 100% above 12.5k
                 current_ga -= tax
                 m_tax += tax
 
-            # B. Contribution
             should_contribute = True
             if use_holiday and current_ga >= 10000:
                 should_contribute = False
             
             if should_contribute:
-                amount = contrib_win if last_session_won else contrib_loss
+                # Doctrine 3.2: €300 Fixed Contribution (Win or Loss)
+                # But kept variables in case you want to toggle back
+                amount = 300 # Hardcoded to Doctrine 3.2 request
                 current_ga += amount
                 m_contrib += amount
             else:
                 m_holidays += 1
             
-            # C. Play
             can_play = (current_ga >= 1500)
             if not can_play:
                 m_insolvent_months += 1
@@ -201,23 +218,17 @@ def show_simulator():
             'sim_num': slider_num_sims.value,
             'sim_years': slider_years.value,
             'sim_freq': slider_frequency.value,
-            'eco_win': slider_contrib_win.value,
-            'eco_loss': slider_contrib_loss.value,
             'eco_tax': switch_luxury_tax.value,
             'eco_hol': switch_holiday.value,
-            'eco_tax_thresh': slider_tax_thresh.value,
-            'eco_tax_rate': slider_tax_rate.value,
             'tac_safety': slider_safety.value,
             'tac_iron': slider_iron_gate.value,
             'tac_press': select_press.value,
             'tac_depth': slider_press_depth.value,
             'risk_stop': slider_stop_loss.value,
-            'risk_prof': slider_profit.value,
             'risk_ratch': switch_ratchet.value,
-            'risk_ratch_pct': slider_ratchet_lock.value,
             'gold_stat': select_status.value,
             'gold_earn': slider_earn_rate.value,
-            'start_ga': slider_start_ga.value # NEW
+            'start_ga': slider_start_ga.value
         }
         
         profile['saved_strategies'][name] = config
@@ -236,24 +247,18 @@ def show_simulator():
         
         slider_num_sims.value = config.get('sim_num', 20)
         slider_years.value = config.get('sim_years', 10)
-        slider_frequency.value = config.get('sim_freq', 9)
-        slider_contrib_win.value = config.get('eco_win', 300)
-        slider_contrib_loss.value = config.get('eco_loss', 200)
+        slider_frequency.value = config.get('sim_freq', 10)
         switch_luxury_tax.value = config.get('eco_tax', True)
-        slider_tax_thresh.value = config.get('eco_tax_thresh', 12500)
-        slider_tax_rate.value = config.get('eco_tax_rate', 25)
         switch_holiday.value = config.get('eco_hol', True)
-        slider_safety.value = config.get('tac_safety', 20)
+        slider_safety.value = config.get('tac_safety', 25)
         slider_iron_gate.value = config.get('tac_iron', 3)
-        select_press.value = config.get('tac_press', 2)
-        slider_press_depth.value = config.get('tac_depth', 3)
-        slider_stop_loss.value = config.get('risk_stop', 8)
-        slider_profit.value = config.get('risk_prof', 10)
-        switch_ratchet.value = config.get('risk_ratch', False)
-        slider_ratchet_lock.value = config.get('risk_ratch_pct', 50)
+        select_press.value = config.get('tac_press', 1)
+        slider_press_depth.value = config.get('tac_depth', 0)
+        slider_stop_loss.value = config.get('risk_stop', 10)
+        switch_ratchet.value = config.get('risk_ratch', True)
         select_status.value = config.get('gold_stat', 'Gold')
         slider_earn_rate.value = config.get('gold_earn', 10)
-        slider_start_ga.value = config.get('start_ga', 1700) # NEW
+        slider_start_ga.value = config.get('start_ga', 3000)
         
         ui.notify(f'Loaded: {name}', type='info')
 
@@ -295,13 +300,11 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
-            # --- CONFIG ---
+            # --- CONFIG (Doctrine 3.2 Defaults) ---
             config = {
                 'num_sims': int(slider_num_sims.value),
                 'years': int(slider_years.value),
                 'freq': int(slider_frequency.value),
-                'contrib_win': int(slider_contrib_win.value),
-                'contrib_loss': int(slider_contrib_loss.value),
                 'status_target_name': select_status.value,
                 'status_target_pts': SBM_TIERS[select_status.value],
                 'earn_rate': float(slider_earn_rate.value),
@@ -309,12 +312,14 @@ def show_simulator():
                 'use_tax': switch_luxury_tax.value,
                 'use_holiday': switch_holiday.value,
                 'safety': int(slider_safety.value),
-                'start_ga': int(slider_start_ga.value), # NEW
+                'start_ga': int(slider_start_ga.value),
                 'press_depth': int(slider_press_depth.value),
-                'ratchet_pct': int(slider_ratchet_lock.value),
-                'tax_thresh': int(slider_tax_thresh.value),
-                'tax_rate': int(slider_tax_rate.value),
-                'press_limit_capped': True # Controlled by depth slider now
+                
+                # These are now fixed by Doctrine 3.2 in the worker, 
+                # passed for report display only
+                'contrib_win': 300, 
+                'contrib_loss': 300,
+                'tax_rate': 100 
             }
             
             total_months = config['years'] * 12
@@ -322,16 +327,12 @@ def show_simulator():
             overrides = StrategyOverrides(
                 iron_gate_limit=int(slider_iron_gate.value),
                 stop_loss_units=int(slider_stop_loss.value),
-                profit_lock_units=int(slider_profit.value),
+                profit_lock_units=8, # Hardcoded 8 for Trigger (Doctrine 3.2)
                 press_trigger_wins=int(select_press.value),
-                press_depth=config['press_depth'],
-                ratchet_lock_pct=config['ratchet_pct'],
-                tax_threshold=config['tax_thresh'],
-                tax_rate=config['tax_rate']
+                press_depth=config['press_depth']
             )
 
-            # Generate dynamic tiers based on safety factor
-            # Use the user's Start GA directly
+            temp_map = generate_tier_map(config['safety'])
             start_ga = config['start_ga']
             
             all_results = []
@@ -492,6 +493,7 @@ def show_simulator():
                     else:
                         ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
+        # REPORT
         with report_container:
             report_container.clear()
             try:
@@ -518,17 +520,12 @@ def show_simulator():
                 st_depth = "Unlimited" if depth == 0 else f"{depth} steps"
                 
                 st_stop = overrides.stop_loss_units
-                st_prof = overrides.profit_lock_units
                 st_safe = config.get('safety', 0)
-                
-                st_ratch = f"ON ({config['ratchet_pct']}%)" if config.get('use_ratchet') else "OFF"
+                st_ratch = "ON (+8, +12, +16, +20)" if config.get('use_ratchet') else "OFF"
                 st_win = config.get('contrib_win', 0)
                 st_loss = config.get('contrib_loss', 0)
-                
-                t_thr = config['tax_thresh']
-                t_rate = config['tax_rate']
-                st_tax = f"ON (>€{t_thr} @ {t_rate}%)" if config.get('use_tax') else "OFF"
-                st_hol = "ON" if config.get('use_holiday') else "OFF"
+                st_tax = "ON (100% >12.5k)" if config.get('use_tax') else "OFF"
+                st_hol = "ON (>10k)" if config.get('use_holiday') else "OFF"
 
                 lines.append(f"Target: {tgt_name} ({tgt_pts:,.0f} pts)")
                 lines.append(f"Start GA: {s_ga} | Final GA: {f_ga}")
@@ -537,15 +534,14 @@ def show_simulator():
                 lines.append(f"Active Play: {act_play} ({ins_mo} months insolvent)")
                 lines.append(f"Gold Prob: {g_prob}")
                 
-                lines.append("-" * 20 + " INPUTS " + "-" * 20)
+                lines.append("-" * 20 + " DOCTRINE 3.2 " + "-" * 20)
                 lines.append(f"Iron Gate: {st_iron} Losses")
-                lines.append(f"Press Logic: {st_press} wins (Depth: {st_depth})")
-                lines.append(f"Stop/Target: {st_stop}u / {st_prof}u")
-                lines.append(f"Ratchet: {st_ratch}")
+                lines.append(f"Press: {st_press} win (Depth: {st_depth})")
+                lines.append(f"Stop Loss: {st_stop} Units")
+                lines.append(f"Protocol: {st_ratch}")
                 lines.append(f"Safety Buffer: {st_safe}x")
-                lines.append(f"Contrib: Win=€{st_win}, Loss=€{st_loss}")
+                lines.append(f"Contrib: €{st_win} Fixed")
                 lines.append(f"Tax: {st_tax}")
-                lines.append(f"Holiday: {st_hol}")
                 
                 report_text = "\n".join(lines)
             except Exception as e:
@@ -556,13 +552,13 @@ def show_simulator():
                 ui.button('COPY', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white').classes('absolute top-2 right-12 z-10')
                 ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>', sanitize=False)
 
-    # --- LAYOUT ---
+    # --- LAYOUT (Doctrine 3.2 Fixed) ---
     with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
         ui.label('RESEARCH LAB: MY MONTE-CARLO').classes('text-2xl font-light text-slate-300')
         
         with ui.card().classes('w-full bg-slate-900 p-6 gap-4'):
             
-            # LIBRARY
+            # --- STRATEGY LIBRARY ---
             with ui.expansion('STRATEGY LIBRARY (Load/Save)', icon='save').classes('w-full bg-slate-800 text-slate-300 mb-4'):
                 with ui.column().classes('w-full gap-4'):
                     with ui.row().classes('w-full items-center gap-4'):
@@ -578,7 +574,7 @@ def show_simulator():
 
             ui.separator().classes('bg-slate-700')
             
-            # SIMULATION ROW
+            # 1. SIMULATION
             with ui.row().classes('w-full gap-4 items-start'):
                 with ui.column().classes('flex-grow'):
                     ui.label('SIMULATION').classes('font-bold text-white mb-2')
@@ -600,9 +596,9 @@ def show_simulator():
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Freq (Sess/Yr)').classes('text-xs text-slate-400')
                         lbl_frequency = ui.label()
-                    slider_frequency = ui.slider(min=9, max=50, value=9).props('color=blue')
+                    slider_frequency = ui.slider(min=9, max=50, value=10).props('color=blue')
                     lbl_frequency.bind_text_from(slider_frequency, 'value', lambda v: f'{v}')
-                    lbl_frequency.set_text('9') 
+                    lbl_frequency.set_text('10') 
 
                 with ui.column().classes('w-1/2'):
                     ui.label('LADDER PREVIEW').classes('font-bold text-white mb-2')
@@ -618,44 +614,26 @@ def show_simulator():
 
             ui.separator().classes('bg-slate-700')
 
-            # ECOSYSTEM ROW
+            # 2. ECOSYSTEM
             ui.label('ECOSYSTEM').classes('font-bold text-green-400')
             with ui.row().classes('w-full gap-8'):
                 with ui.column().classes('flex-grow'):
-                    with ui.row().classes('w-full justify-between'):
-                        ui.label('Contrib (Win)').classes('text-xs text-green-400')
-                        lbl_contrib_win = ui.label()
-                    slider_contrib_win = ui.slider(min=0, max=1000, value=300).props('color=green')
-                    lbl_contrib_win.bind_text_from(slider_contrib_win, 'value', lambda v: f'€{v}')
-                    lbl_contrib_win.set_text('€300')
-                
-                with ui.column().classes('flex-grow'):
-                    with ui.row().classes('w-full justify-between'):
-                        ui.label('Contrib (Loss)').classes('text-xs text-orange-400')
-                        lbl_contrib_loss = ui.label()
-                    slider_contrib_loss = ui.slider(min=0, max=1000, value=200).props('color=orange')
-                    lbl_contrib_loss.bind_text_from(slider_contrib_loss, 'value', lambda v: f'€{v}')
-                    lbl_contrib_loss.set_text('€200')
+                    # Fixed Contrib Display (Doctrine 3.2 = Flat 300, but kept sliders invisible or disabled if needed, here just set to 300)
+                    ui.label('Monthly Contribution (Fixed)').classes('text-xs text-green-400')
+                    slider_contrib_win = ui.slider(min=0, max=1000, value=300).props('color=green readonly')
+                    ui.label('€300 (Win/Loss)').classes('font-bold text-green-400')
+                    # Hidden loss slider for code compatibility
+                    slider_contrib_loss = ui.slider(min=0, max=1000, value=300).classes('hidden')
                 
                 with ui.column():
-                    switch_luxury_tax = ui.switch('Tax').props('color=gold')
+                    switch_luxury_tax = ui.switch('Tax (100% >12.5k)').props('color=gold')
                     switch_luxury_tax.value = True
-                    switch_holiday = ui.switch('Holiday').props('color=blue')
+                    switch_holiday = ui.switch('Holiday (>10k)').props('color=blue')
                     switch_holiday.value = True
-                    
-                    # Tax Settings Expandable
-                    with ui.expansion('Settings', icon='tune').classes('bg-slate-800 text-xs'):
-                         with ui.column().classes('p-2'):
-                             ui.label('Tax Threshold')
-                             slider_tax_thresh = ui.slider(min=5000, max=50000, step=500, value=12500).props('color=gold')
-                             ui.label().bind_text_from(slider_tax_thresh, 'value', lambda v: f'€{v}')
-                             ui.label('Tax Rate %')
-                             slider_tax_rate = ui.slider(min=5, max=50, step=5, value=25).props('color=gold')
-                             ui.label().bind_text_from(slider_tax_rate, 'value', lambda v: f'{v}%')
 
             ui.separator().classes('bg-slate-700')
 
-            # STRATEGY & RISK ROW
+            # 3. STRATEGY & RISK
             with ui.grid(columns=2).classes('w-full gap-8'):
                 with ui.column():
                     ui.label('TACTICS').classes('font-bold text-purple-400')
@@ -663,9 +641,9 @@ def show_simulator():
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Safety Buffer').classes('text-xs text-orange-400')
                         lbl_safety = ui.label()
-                    slider_safety = ui.slider(min=10, max=60, value=20, on_change=update_ladder_preview).props('color=orange')
+                    slider_safety = ui.slider(min=10, max=60, value=25, on_change=update_ladder_preview).props('color=orange')
                     lbl_safety.bind_text_from(slider_safety, 'value', lambda v: f'{v}x')
-                    lbl_safety.set_text('20x')
+                    lbl_safety.set_text('25x')
                     
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Iron Gate Limit').classes('text-xs text-purple-400')
@@ -674,14 +652,14 @@ def show_simulator():
                     lbl_iron.bind_text_from(slider_iron_gate, 'value', lambda v: f'{v} Losses')
                     lbl_iron.set_text('3 Losses')
                     
-                    select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2, label='Press Logic').classes('w-full')
+                    select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=1, label='Press Logic').classes('w-full')
                     
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Press Depth (0=Inf)').classes('text-xs text-red-400')
                         lbl_depth = ui.label()
-                    slider_press_depth = ui.slider(min=0, max=5, value=3).props('color=red')
+                    slider_press_depth = ui.slider(min=0, max=5, value=0).props('color=red')
                     lbl_depth.bind_text_from(slider_press_depth, 'value', lambda v: 'Unlimited' if v==0 else f'{v} Steps')
-                    lbl_depth.set_text('3 Steps')
+                    lbl_depth.set_text('Unlimited')
 
                 with ui.column():
                     ui.label('RISK & REWARD').classes('font-bold text-red-400')
@@ -689,24 +667,14 @@ def show_simulator():
                     with ui.row().classes('w-full justify-between'):
                         ui.label('Stop Loss').classes('text-xs text-red-400')
                         lbl_stop = ui.label()
-                    slider_stop_loss = ui.slider(min=5, max=30, value=8).props('color=red')
+                    slider_stop_loss = ui.slider(min=5, max=30, value=10).props('color=red')
                     lbl_stop.bind_text_from(slider_stop_loss, 'value', lambda v: f'{v} Units')
-                    lbl_stop.set_text('8 Units')
+                    lbl_stop.set_text('10 Units')
                     
-                    with ui.row().classes('w-full justify-between'):
-                        ui.label('Target').classes('text-xs text-green-400')
-                        lbl_profit = ui.label()
-                    slider_profit = ui.slider(min=3, max=20, value=10).props('color=green')
-                    lbl_profit.bind_text_from(slider_profit, 'value', lambda v: f'{v} Units')
-                    lbl_profit.set_text('10 Units')
+                    # Ratchet is now Stepped Protocol by default
+                    switch_ratchet = ui.switch('Gold Protocol (Stepped Ratchet)').props('color=gold')
+                    switch_ratchet.value = True
                     
-                    with ui.row().classes('items-center justify-between'):
-                         switch_ratchet = ui.switch('Ratchet').props('color=gold')
-                         with ui.column():
-                             ui.label('Lock %').classes('text-xs text-yellow-400')
-                             slider_ratchet_lock = ui.slider(min=10, max=90, step=10, value=50).props('color=gold')
-                             ui.label().bind_text_from(slider_ratchet_lock, 'value', lambda v: f'{v}%')
-
                     ui.label('Status Target').classes('text-xs text-yellow-400 mt-2')
                     select_status = ui.select(list(SBM_TIERS.keys()), value='Gold').classes('w-full')
                     
@@ -722,13 +690,14 @@ def show_simulator():
             # Run
             with ui.row().classes('w-full items-center justify-between'):
                 with ui.column():
-                     # Replaced Select Tier with Slider Start GA
-                     with ui.row().classes('w-full justify-between'):
+                    with ui.row().classes('w-full justify-between'):
                         ui.label('Starting Capital').classes('text-xs text-green-400')
                         lbl_start_ga = ui.label()
-                     slider_start_ga = ui.slider(min=1000, max=3000, step=100, value=1700).props('color=green')
-                     lbl_start_ga.bind_text_from(slider_start_ga, 'value', lambda v: f'€{v}')
-                     lbl_start_ga.set_text('€1700')
+                    slider_start_ga = ui.slider(min=1000, max=5000, step=100, value=3000).props('color=green')
+                    lbl_start_ga.bind_text_from(slider_start_ga, 'value', lambda v: f'€{v}')
+                    lbl_start_ga.set_text('€3000')
+                    
+                    select_tier = ui.select({1:1}, value=1).classes('hidden') 
                 
                 btn_sim = ui.button('RUN STATUS SIM', on_click=run_sim).props('icon=verified color=yellow text-color=black size=lg')
         
