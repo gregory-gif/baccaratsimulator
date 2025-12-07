@@ -51,12 +51,7 @@ class SimulationWorker:
             if use_ratchet:
                 if not ratchet_triggered and state.session_pnl >= trigger_profit_amount:
                     ratchet_triggered = True
-                
-                # Dynamic Ratchet Lock
-                lock_pct = overrides.ratchet_lock_pct / 100.0
-                lock_floor = trigger_profit_amount * lock_pct
-                
-                if ratchet_triggered and state.session_pnl <= lock_floor:
+                if ratchet_triggered and state.session_pnl <= (trigger_profit_amount * 0.5):
                     break 
 
             rnd = random.random()
@@ -114,17 +109,12 @@ class SimulationWorker:
             if m > 0 and m % 12 == 0:
                 current_year_points = 0
 
-            # A. Luxury Tax
-            tax_thresh = overrides.tax_threshold
-            tax_rate = overrides.tax_rate / 100.0
-            
-            if use_tax and current_ga > tax_thresh:
-                surplus = current_ga - tax_thresh
-                tax = surplus * tax_rate
+            if use_tax and current_ga > 12500:
+                surplus = current_ga - 12500
+                tax = surplus * 0.25
                 current_ga -= tax
                 m_tax += tax
 
-            # B. Contribution
             should_contribute = True
             if use_holiday and current_ga >= 10000:
                 should_contribute = False
@@ -136,7 +126,6 @@ class SimulationWorker:
             else:
                 m_holidays += 1
             
-            # C. Play
             can_play = (current_ga >= 1500)
             if not can_play:
                 m_insolvent_months += 1
@@ -176,51 +165,98 @@ class SimulationWorker:
 def show_simulator():
     running = False
     
-    # --- UI COMPONENTS (Defined before Layout) ---
-    # SIMULATION
-    slider_num_sims = ui.slider(min=10, max=100, value=20).props('color=cyan')
-    slider_years = ui.slider(min=1, max=10, value=10).props('color=blue')
-    slider_frequency = ui.slider(min=9, max=50, value=9).props('color=blue')
-    
-    # ECOSYSTEM
-    slider_contrib_win = ui.slider(min=0, max=1000, value=300).props('color=green')
-    slider_contrib_loss = ui.slider(min=0, max=1000, value=200).props('color=orange')
-    switch_luxury_tax = ui.switch('Tax').props('color=gold')
-    switch_luxury_tax.value = True
-    switch_holiday = ui.switch('Holiday').props('color=blue')
-    switch_holiday.value = True
-    slider_tax_thresh = ui.slider(min=5000, max=50000, step=500, value=12500).props('color=gold')
-    slider_tax_rate = ui.slider(min=5, max=100, step=5, value=100).props('color=gold')
+    # --- STRATEGY LIBRARY FUNCTIONS (Restored) ---
+    def load_saved_strategies():
+        profile = load_profile()
+        return profile.get('saved_strategies', {})
 
-    # TACTICS
-    slider_safety = ui.slider(min=10, max=60, value=25).props('color=orange')
-    slider_iron_gate = ui.slider(min=2, max=6, value=3).props('color=purple')
-    select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=1, label='Press Logic').classes('w-full')
-    slider_press_depth = ui.slider(min=0, max=5, value=0).props('color=red')
-    
-    # RISK
-    slider_stop_loss = ui.slider(min=5, max=30, value=10).props('color=red')
-    slider_profit = ui.slider(min=3, max=20, value=8).props('color=green')
-    switch_ratchet = ui.switch('Ratchet Mode').props('color=gold')
-    switch_ratchet.value = True
-    slider_ratchet_lock = ui.slider(min=10, max=90, step=5, value=40).props('color=gold')
-    select_status = ui.select(list(SBM_TIERS.keys()), value='Gold').classes('w-full')
-    slider_earn_rate = ui.slider(min=1, max=20, value=10).props('color=yellow')
-    
-    # RUN
-    slider_start_ga = ui.slider(min=1000, max=5000, step=100, value=3000).props('color=green')
-    btn_sim = ui.button('RUN STATUS SIM').props('icon=verified color=yellow text-color=black size=lg')
-    select_tier = ui.select({1:1}, value=1).classes('hidden') # Compat
-    
-    # Ladder Preview
-    ladder_grid = ui.aggrid({
-        'columnDefs': [
-            {'headerName': 'Tier', 'field': 'tier', 'width': 70},
-            {'headerName': 'Bet', 'field': 'bet', 'width': 70},
-            {'headerName': 'Start GA', 'field': 'start', 'width': 100},
-        ],
-        'rowData': [],
-    }).classes('h-40 w-full theme-balham-dark')
+    def update_strategy_list():
+        saved = load_saved_strategies()
+        select_saved.options = list(saved.keys())
+        select_saved.update()
+
+    def save_current_strategy():
+        name = input_name.value
+        if not name:
+            ui.notify('Please enter a name', type='warning')
+            return
+        
+        profile = load_profile()
+        if 'saved_strategies' not in profile:
+            profile['saved_strategies'] = {}
+            
+        config = {
+            'sim_num': slider_num_sims.value,
+            'sim_years': slider_years.value,
+            'sim_freq': slider_frequency.value,
+            'eco_win': slider_contrib_win.value,
+            'eco_loss': slider_contrib_loss.value,
+            'eco_tax': switch_luxury_tax.value,
+            'eco_hol': switch_holiday.value,
+            'tac_safety': slider_safety.value,
+            'tac_iron': slider_iron_gate.value,
+            'tac_press': select_press.value,
+            'tac_depth': slider_press_depth.value, # Press Depth
+            'risk_stop': slider_stop_loss.value,
+            'risk_prof': slider_profit.value,
+            'risk_ratch': switch_ratchet.value,
+            'gold_stat': select_status.value,
+            'gold_earn': slider_earn_rate.value,
+            'start_tier': select_tier.value
+        }
+        
+        profile['saved_strategies'][name] = config
+        save_profile(profile)
+        ui.notify(f'Saved: {name}', type='positive')
+        update_strategy_list()
+        input_name.value = ''
+
+    def load_selected_strategy():
+        name = select_saved.value
+        if not name: return
+        
+        saved = load_saved_strategies()
+        config = saved.get(name)
+        if not config: return
+        
+        slider_num_sims.value = config.get('sim_num', 20)
+        slider_years.value = config.get('sim_years', 10)
+        slider_frequency.value = config.get('sim_freq', 9)
+        slider_contrib_win.value = config.get('eco_win', 300)
+        slider_contrib_loss.value = config.get('eco_loss', 200)
+        switch_luxury_tax.value = config.get('eco_tax', True)
+        switch_holiday.value = config.get('eco_hol', True)
+        slider_safety.value = config.get('tac_safety', 20)
+        slider_iron_gate.value = config.get('tac_iron', 3)
+        select_press.value = config.get('tac_press', 2)
+        
+        # Restore Press Depth (Default 0/Unlimited if missing)
+        depth = config.get('tac_depth', 0)
+        # Backward compatibility: check for old 'tac_cap' bool
+        if 'tac_cap' in config and 'tac_depth' not in config:
+             depth = 3 if config['tac_cap'] else 0
+        slider_press_depth.value = depth
+
+        slider_stop_loss.value = config.get('risk_stop', 8)
+        slider_profit.value = config.get('risk_prof', 10)
+        switch_ratchet.value = config.get('risk_ratch', False)
+        select_status.value = config.get('gold_stat', 'Gold')
+        slider_earn_rate.value = config.get('gold_earn', 10)
+        select_tier.value = config.get('start_tier', 1)
+        
+        ui.notify(f'Loaded: {name}', type='info')
+
+    def delete_selected_strategy():
+        name = select_saved.value
+        if not name: return
+        
+        profile = load_profile()
+        if 'saved_strategies' in profile and name in profile['saved_strategies']:
+            del profile['saved_strategies'][name]
+            save_profile(profile)
+            ui.notify(f'Deleted: {name}', type='negative')
+            select_saved.value = None
+            update_strategy_list()
 
     def update_ladder_preview():
         factor = slider_safety.value
@@ -236,14 +272,11 @@ def show_simulator():
             })
         ladder_grid.options['rowData'] = rows
         ladder_grid.update()
-    
-    # Bind update
-    slider_safety.on_change(update_ladder_preview)
 
-    # --- ASYNC RUNNER ---
     async def run_sim():
         nonlocal running
         if running: return
+        
         try:
             running = True
             btn_sim.disable()
@@ -251,7 +284,7 @@ def show_simulator():
             progress.set_visibility(True)
             label_stats.set_text("Initializing Multiverse...")
             
-            # Safe Config Capture
+            # --- CONFIG ---
             config = {
                 'num_sims': int(slider_num_sims.value),
                 'years': int(slider_years.value),
@@ -265,12 +298,8 @@ def show_simulator():
                 'use_tax': switch_luxury_tax.value,
                 'use_holiday': switch_holiday.value,
                 'safety': int(slider_safety.value),
-                'start_ga': int(slider_start_ga.value),
-                'press_depth': int(slider_press_depth.value),
-                'ratchet_pct': int(slider_ratchet_lock.value),
-                'tax_thresh': int(slider_tax_thresh.value),
-                'tax_rate': int(slider_tax_rate.value),
-                'press_limit_capped': True 
+                'start_tier': int(select_tier.value),
+                'press_depth': int(slider_press_depth.value) # NEW
             }
             
             total_months = config['years'] * 12
@@ -280,19 +309,17 @@ def show_simulator():
                 stop_loss_units=int(slider_stop_loss.value),
                 profit_lock_units=int(slider_profit.value),
                 press_trigger_wins=int(select_press.value),
-                press_depth=config['press_depth'],
-                ratchet_lock_pct=config['ratchet_pct'],
-                tax_threshold=config['tax_thresh'],
-                tax_rate=config['tax_rate']
+                press_depth=config['press_depth'] # NEW
             )
 
             temp_map = generate_tier_map(config['safety'])
-            start_ga = config['start_ga']
+            start_ga = temp_map[config['start_tier']].min_ga
             
             all_results = []
             batch_size = 10
             for i in range(0, config['num_sims'], batch_size):
                 count = min(batch_size, config['num_sims'] - i)
+                
                 def run_batch_careers():
                     batch_data = []
                     for _ in range(count):
@@ -307,6 +334,7 @@ def show_simulator():
 
                 batch_res = await asyncio.to_thread(run_batch_careers)
                 all_results.extend(batch_res)
+                
                 pct = len(all_results) / config['num_sims']
                 progress.set_value(pct)
                 label_stats.set_text(f"Simulating Universe {len(all_results)}/{config['num_sims']}")
@@ -320,120 +348,56 @@ def show_simulator():
             print(traceback.format_exc())
             ui.notify(f"Error: {error_msg}", type='negative', close_button=True)
             label_stats.set_text(f"Failed: {error_msg}")
+            
         finally:
             running = False
             btn_sim.enable()
             progress.set_visibility(False)
-            
-    btn_sim.on_click(run_sim)
 
-    # --- HELPER FUNCTIONS ---
-    def load_saved_strategies():
-        profile = load_profile()
-        return profile.get('saved_strategies', {})
-
-    def update_strategy_list():
-        saved = load_saved_strategies()
-        select_saved.options = list(saved.keys())
-        select_saved.update()
-
-    def save_current_strategy():
-        name = input_name.value
-        if not name: return
-        profile = load_profile()
-        if 'saved_strategies' not in profile: profile['saved_strategies'] = {}
-        config = {
-            'sim_num': slider_num_sims.value,
-            'sim_years': slider_years.value,
-            'sim_freq': slider_frequency.value,
-            'eco_win': slider_contrib_win.value,
-            'eco_loss': slider_contrib_loss.value,
-            'eco_tax': switch_luxury_tax.value,
-            'eco_hol': switch_holiday.value,
-            'eco_tax_thresh': slider_tax_thresh.value,
-            'eco_tax_rate': slider_tax_rate.value,
-            'tac_safety': slider_safety.value,
-            'tac_iron': slider_iron_gate.value,
-            'tac_press': select_press.value,
-            'tac_depth': slider_press_depth.value,
-            'risk_stop': slider_stop_loss.value,
-            'risk_prof': slider_profit.value,
-            'risk_ratch': switch_ratchet.value,
-            'risk_ratch_pct': slider_ratchet_lock.value,
-            'gold_stat': select_status.value,
-            'gold_earn': slider_earn_rate.value,
-            'start_ga': slider_start_ga.value
-        }
-        profile['saved_strategies'][name] = config
-        save_profile(profile)
-        ui.notify(f'Saved: {name}', type='positive')
-        update_strategy_list()
-
-    def load_selected_strategy():
-        name = select_saved.value
-        saved = load_saved_strategies()
-        config = saved.get(name)
-        if not config: return
-        slider_num_sims.value = config.get('sim_num', 20)
-        slider_years.value = config.get('sim_years', 10)
-        slider_frequency.value = config.get('sim_freq', 9)
-        slider_contrib_win.value = config.get('eco_win', 300)
-        slider_contrib_loss.value = config.get('eco_loss', 200)
-        switch_luxury_tax.value = config.get('eco_tax', True)
-        switch_holiday.value = config.get('eco_hol', True)
-        slider_tax_thresh.value = config.get('eco_tax_thresh', 12500)
-        slider_tax_rate.value = config.get('eco_tax_rate', 25)
-        slider_safety.value = config.get('tac_safety', 20)
-        slider_iron_gate.value = config.get('tac_iron', 3)
-        select_press.value = config.get('tac_press', 2)
-        slider_press_depth.value = config.get('tac_depth', 3)
-        slider_stop_loss.value = config.get('risk_stop', 8)
-        slider_profit.value = config.get('risk_prof', 10)
-        switch_ratchet.value = config.get('risk_ratch', False)
-        slider_ratchet_lock.value = config.get('risk_ratch_pct', 50)
-        select_status.value = config.get('gold_stat', 'Gold')
-        slider_earn_rate.value = config.get('gold_earn', 10)
-        slider_start_ga.value = config.get('start_ga', 1700)
-        ui.notify(f'Loaded: {name}', type='info')
-
-    def delete_selected_strategy():
-        name = select_saved.value
-        profile = load_profile()
-        if 'saved_strategies' in profile and name in profile['saved_strategies']:
-            del profile['saved_strategies'][name]
-            save_profile(profile)
-            update_strategy_list()
-
-    # --- RENDERING FUNCTION ---
     def render_analysis(results, config, start_ga, overrides):
         if not results: return
         
-        # Calc Stats
-        final_gas = [r['final_ga'] for r in results]
-        avg_final_ga = np.mean(final_gas)
+        # 1. DATA PROCESSING
+        trajectories = np.array([r['trajectory'] for r in results])
+        months = list(range(trajectories.shape[1]))
         
-        insol_months = [r['insolvent_months'] for r in results]
-        avg_insolvent = np.mean(insol_months)
+        min_band = np.min(trajectories, axis=0)
+        max_band = np.max(trajectories, axis=0)
+        p25_band = np.percentile(trajectories, 25, axis=0)
+        p75_band = np.percentile(trajectories, 75, axis=0)
+        mean_line = np.mean(trajectories, axis=0)
         
-        gold_hits = [r for r in results if r['gold_year'] != -1]
-        gold_prob = (len(gold_hits) / len(results)) * 100
-        
-        total_months = config['years'] * 12
-        active_pct = 100 - ((avg_insolvent / total_months) * 100)
-        
-        # Net Cost
+        avg_final_ga = np.mean([r['final_ga'] for r in results])
         avg_contrib = np.mean([r['contrib'] for r in results])
         avg_tax = np.mean([r['tax'] for r in results])
-        avg_vol = np.mean([r['total_volume'] for r in results])
+        avg_pnl = np.mean([r['play_pnl'] for r in results])
+        avg_holidays = np.mean([r['holidays'] for r in results])
+        avg_insolvent = np.mean([r['insolvent_months'] for r in results])
+        avg_volume = np.mean([r['total_volume'] for r in results])
         
-        net_cost_monthly = ((start_ga + avg_contrib) - (avg_final_ga + avg_tax)) / total_months
-        cash_flow_monthly = (avg_contrib - avg_tax) / total_months
+        gold_hits = [r['gold_year'] for r in results if r['gold_year'] != -1]
+        gold_prob = (len(gold_hits) / len(results)) * 100
+        avg_year_hit = np.mean(gold_hits) if gold_hits else 0
+        
+        total_months = config['years'] * 12
+        insolvency_pct = (avg_insolvent / total_months) * 100
+        active_pct = 100 - insolvency_pct
+        avg_monthly_cost = (avg_contrib - avg_tax) / total_months
+        net_life_result = avg_final_ga + avg_tax - (start_ga + avg_contrib)
 
-        # Score
-        survivor_count = len([x for x in final_gas if x >= 1500])
+        # 2. SCOREBOARD
+        survivor_count = len([r for r in results if r['final_ga'] >= 1500])
         score_survival = (survivor_count / len(results)) * 100
-        score_cost = 100 if net_cost_monthly <= 0 else max(0, 100 - (net_cost_monthly/5))
-        total_score = (gold_prob*0.3) + (score_survival*0.3) + (score_cost*0.2) + (active_pct*0.2)
+        
+        if avg_monthly_cost <= 0:
+            score_cost = 100
+        else:
+            score_cost = max(0, 100 - (avg_monthly_cost / 5))
+            
+        score_time = active_pct
+        score_gold = gold_prob
+        
+        total_score = (score_gold * 0.30) + (score_survival * 0.30) + (score_cost * 0.20) + (score_time * 0.20)
         
         if total_score >= 90: grade, g_col = "A", "text-green-400"
         elif total_score >= 80: grade, g_col = "B", "text-blue-400"
@@ -441,16 +405,17 @@ def show_simulator():
         elif total_score >= 60: grade, g_col = "D", "text-orange-400"
         else: grade, g_col = "F", "text-red-600"
 
-        # 1. SCOREBOARD
         with scoreboard_container:
             scoreboard_container.clear()
             with ui.card().classes('w-full bg-slate-800 p-4 border-l-8').style(f'border-color: {"#ef4444" if grade=="F" else "#4ade80"}'):
                 with ui.row().classes('w-full items-center justify-between'):
+                    # Score & Final Money
                     with ui.column():
                         ui.label('STRATEGY GRADE').classes('text-xs text-slate-400 font-bold tracking-widest')
                         ui.label(f"{grade}").classes(f'text-6xl font-black {g_col} leading-none')
                         ui.label(f"{total_score:.1f}% Score").classes(f'text-sm font-bold {g_col}')
                     
+                    # NEW: Avg Ending Bankroll Display
                     with ui.column().classes('items-center'):
                         ui.label('AVG ENDING BANKROLL').classes('text-[10px] text-slate-400 font-bold tracking-widest')
                         ui.label(f"€{avg_final_ga:,.0f}").classes('text-4xl font-black text-white leading-none')
@@ -458,232 +423,287 @@ def show_simulator():
                         pnl_prefix = '+' if avg_final_ga >= start_ga else ''
                         ui.label(f"{pnl_prefix}€{avg_final_ga - start_ga:,.0f}").classes(f'text-sm font-bold {pnl_color}')
                     
+                    # Sub-Scores
                     with ui.grid(columns=4).classes('gap-x-8 gap-y-2'):
                         with ui.column().classes('items-center'):
                             ui.label('Gold Chase').classes('text-[10px] text-slate-500 uppercase')
-                            ui.label(f"{gold_prob:.0f}%").classes('text-lg font-bold text-yellow-400')
+                            ui.label(f"{score_gold:.0f}%").classes('text-lg font-bold text-yellow-400')
                         with ui.column().classes('items-center'):
                             ui.label('Survival').classes('text-[10px] text-slate-500 uppercase')
                             ui.label(f"{score_survival:.0f}%").classes('text-lg font-bold text-blue-400')
                         with ui.column().classes('items-center'):
-                            ui.label('Net Equity').classes('text-[10px] text-slate-500 uppercase')
+                            ui.label('Cost Effic.').classes('text-[10px] text-slate-500 uppercase')
                             ui.label(f"{score_cost:.0f}%").classes('text-lg font-bold text-green-400')
                         with ui.column().classes('items-center'):
                             ui.label('Active Play').classes('text-[10px] text-slate-500 uppercase')
-                            ui.label(f"{active_pct:.0f}%").classes('text-lg font-bold text-purple-400')
+                            ui.label(f"{score_time:.0f}%").classes('text-lg font-bold text-purple-400')
 
-        # 2. CHART
+        # 3. CHART
         with chart_container:
             chart_container.clear()
-            # ... (Standard Chart Logic - Simplified for brevity but functionality preserved)
-            trajectories = np.array([r['trajectory'] for r in results])
-            months = list(range(trajectories.shape[1]))
-            mean_line = np.mean(trajectories, axis=0)
-            
             fig = go.Figure()
+            fig.add_trace(go.Scatter(x=months + months[::-1], y=np.concatenate([max_band, min_band[::-1]]), fill='toself', fillcolor='rgba(128, 128, 128, 0.2)', line=dict(color='rgba(255,255,255,0)'), name='Best/Worst'))
+            fig.add_trace(go.Scatter(x=months + months[::-1], y=np.concatenate([p75_band, p25_band[::-1]]), fill='toself', fillcolor='rgba(0, 255, 136, 0.3)', line=dict(color='rgba(255,255,255,0)'), name='Likely'))
             fig.add_trace(go.Scatter(x=months, y=mean_line, mode='lines', name='Average', line=dict(color='white', width=2)))
-            fig.add_hline(y=1000, line_dash="dash", line_color="red")
-            fig.add_hline(y=12500, line_dash="dash", line_color="gold")
-            fig.update_layout(title='Wealth Trajectory (Avg)', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20))
+            
+            fig.add_hline(y=1000, line_dash="dash", line_color="red", annotation_text="Insolvency")
+            if config['use_holiday']: fig.add_hline(y=10000, line_dash="dash", line_color="yellow", annotation_text="Holiday")
+            if config['use_tax']: fig.add_hline(y=12500, line_dash="dash", line_color="gold", annotation_text="Luxury Tax")
+
+            fig.update_layout(title='Monte Carlo Confidence Bands', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#94a3b8'), margin=dict(l=20, r=20, t=40, b=20), xaxis=dict(title='Months Passed', gridcolor='#334155'), yaxis=dict(title='Game Account (€)', gridcolor='#334155'), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             ui.plotly(fig).classes('w-full h-96')
 
-        # 3. METRICS
+        # 4. METRICS
         with stats_container:
             stats_container.clear()
-            with ui.grid(columns=4).classes('w-full gap-4'):
+            with ui.grid(columns=3).classes('w-full gap-4'):
                 with ui.card().classes('bg-slate-900 border-l-4 border-yellow-500 p-4'):
-                    ui.label('GOLD PROB').classes('text-xs text-slate-500')
-                    ui.label(f"{gold_prob:.1f}%").classes('text-2xl font-bold text-yellow-400')
-                
+                    ui.label(f"{config['status_target_name'].upper()} PROB").classes('text-xs text-slate-500')
+                    g_color = 'text-green-400' if gold_prob > 80 else 'text-yellow-400'
+                    if gold_prob < 50: g_color = 'text-red-400'
+                    ui.label(f"{gold_prob:.1f}%").classes(f'text-3xl font-black {g_color}')
+                    if gold_prob > 0:
+                        ui.label(f"Hit Year {avg_year_hit:.1f}").classes('text-xs text-slate-400')
+                    else:
+                        ui.label("Missed").classes('text-xs text-slate-500')
+
                 with ui.card().classes('bg-slate-900 border-l-4 border-blue-500 p-4'):
                     ui.label('AVG FINAL GA').classes('text-xs text-slate-500')
-                    ui.label(f"€{avg_final_ga:,.0f}").classes('text-2xl font-bold text-white')
-                
-                with ui.card().classes('bg-slate-900 border-l-4 border-orange-500 p-4'):
-                    ui.label('CASH FLOW').classes('text-xs text-slate-500')
-                    ui.label(f"€{cash_flow_monthly:,.0f}/mo").classes('text-2xl font-bold text-orange-400')
+                    color = 'text-green-400' if avg_final_ga >= start_ga else 'text-red-400'
+                    ui.label(f"€{avg_final_ga:,.0f}").classes(f'text-2xl font-bold {color}')
                 
                 with ui.card().classes('bg-slate-900 border-l-4 border-red-500 p-4'):
-                    ui.label('NET COST').classes('text-xs text-slate-500')
-                    ui.label(f"€{net_cost_monthly:,.0f}/mo").classes('text-2xl font-bold text-red-400')
+                    ui.label('MONTHLY COST').classes('text-xs text-slate-500')
+                    if avg_monthly_cost <= 0:
+                        ui.label(f"+€{abs(avg_monthly_cost):.0f}").classes('text-2xl font-bold text-green-400')
+                    else:
+                        ui.label(f"€{avg_monthly_cost:.0f}").classes('text-2xl font-bold text-red-400')
 
-        # 4. REPORT
+        # 5. REPORT (Safe Construction)
         with report_container:
             report_container.clear()
             try:
                 lines = []
                 lines.append(f"MONTE CARLO REPORT ({len(results)} Universes)")
+                lines.append(f"STRATEGY GRADE: {grade} ({total_score:.1f}%)")
                 lines.append("-" * 40)
-                lines.append(f"Target: {config.get('status_target_name')} ({config.get('status_target_pts'):,} pts)")
-                lines.append(f"Start GA: €{start_ga:,.0f} | Final GA: €{avg_final_ga:,.0f}")
-                lines.append(f"Net Life Result: €{net_life_cost * -1:,.0f}")
-                lines.append(f"Cash Flow: €{cash_flow_monthly:,.0f}/mo | Net Cost: €{net_cost_monthly:,.0f}/mo")
-                lines.append(f"Active Play: {active_pct:.1f}% ({avg_insolvent:.1f} months insolvent)")
-                lines.append(f"Gold Prob: {gold_prob:.1f}% | Vol: €{avg_volume:,.0f}")
                 
-                # Inputs
+                tgt_name = config.get('status_target_name', 'N/A')
+                tgt_pts = config.get('status_target_pts', 0)
+                
+                s_ga = f"€{start_ga:,.0f}"
+                f_ga = f"€{avg_final_ga:,.0f}"
+                n_res = f"€{net_life_result:,.0f}"
+                t_cost = f"€{avg_monthly_cost:,.0f}"
+                act_play = f"{active_pct:.1f}%"
+                ins_mo = f"{avg_insolvent:.1f}"
+                g_prob = f"{gold_prob:.1f}%"
+                
                 st_iron = overrides.iron_gate_limit
                 st_press = overrides.press_trigger_wins
-                st_depth = f"{overrides.press_depth}" if overrides.press_depth > 0 else "Inf"
                 
-                lines.append("-" * 20)
-                lines.append(f"Iron: {st_iron} | Press: {st_press} (Depth: {st_depth})")
-                lines.append(f"Stop: {overrides.stop_loss_units}u | Target: {overrides.profit_lock_units}u")
-                lines.append(f"Safety: {config.get('safety')}x | Ratchet: {config.get('ratchet_pct')}%")
+                # Press Depth Display
+                depth = overrides.press_depth
+                st_depth = "Unlimited" if depth == 0 else f"{depth} steps"
+                
+                st_stop = overrides.stop_loss_units
+                st_prof = overrides.profit_lock_units
+                st_safe = config.get('safety', 0)
+                st_ratch = "ON" if config.get('use_ratchet') else "OFF"
+                st_win = config.get('contrib_win', 0)
+                st_loss = config.get('contrib_loss', 0)
+                st_tax = "ON" if config.get('use_tax') else "OFF"
+                st_hol = "ON" if config.get('use_holiday') else "OFF"
+
+                lines.append(f"Target: {tgt_name} ({tgt_pts:,.0f} pts)")
+                lines.append(f"Start GA: {s_ga} | Final GA: {f_ga}")
+                lines.append(f"Net Life Result: {n_res} (Avg)")
+                lines.append(f"True Cost: {t_cost}/month")
+                lines.append(f"Active Play: {act_play} ({ins_mo} months insolvent)")
+                lines.append(f"Gold Prob: {g_prob}")
+                
+                lines.append("-" * 20 + " INPUTS " + "-" * 20)
+                lines.append(f"Iron Gate: {st_iron} Losses")
+                lines.append(f"Press Logic: {st_press} wins (Depth: {st_depth})")
+                lines.append(f"Stop/Target: {st_stop}u / {st_prof}u (Ratchet: {st_ratch})")
+                lines.append(f"Safety Buffer: {st_safe}x")
+                lines.append(f"Contrib: Win=€{st_win}, Loss=€{st_loss}")
+                lines.append(f"Toggles: Tax={st_tax}, Hol={st_hol}")
                 
                 report_text = "\n".join(lines)
             except Exception as e:
-                report_text = str(e)
+                report_text = f"Report Error: {str(e)}"
+                print(traceback.format_exc())
 
             with ui.expansion('AI Analysis Data', icon='analytics').classes('w-full bg-slate-800 text-slate-400 mb-4'):
-                 ui.button('COPY', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white').classes('absolute top-2 right-12 z-10')
-                 ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>', sanitize=False)
+                ui.button('COPY', on_click=lambda: ui.run_javascript(f'navigator.clipboard.writeText(`{report_text}`)')).props('flat dense icon=content_copy color=white').classes('absolute top-2 right-12 z-10')
+                ui.html(f'<pre style="white-space: pre-wrap; font-family: monospace; color: #94a3b8; font-size: 0.75rem;">{report_text}</pre>', sanitize=False)
 
-    # --- LAYOUT CONSTRUCTION ---
-    try:
-        with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
-            ui.label('RESEARCH LAB: MY MONTE-CARLO').classes('text-2xl font-light text-slate-300')
+    # --- LAYOUT ---
+    with ui.column().classes('w-full max-w-4xl mx-auto gap-6 p-4'):
+        ui.label('RESEARCH LAB: MY MONTE-CARLO').classes('text-2xl font-light text-slate-300')
+        
+        with ui.card().classes('w-full bg-slate-900 p-6 gap-4'):
             
-            with ui.card().classes('w-full bg-slate-900 p-6 gap-4'):
+            # --- STRATEGY LIBRARY ---
+            with ui.expansion('STRATEGY LIBRARY (Load/Save)', icon='save').classes('w-full bg-slate-800 text-slate-300 mb-4'):
+                with ui.column().classes('w-full gap-4'):
+                    with ui.row().classes('w-full items-center gap-4'):
+                        input_name = ui.input('Save Name').props('dark').classes('flex-grow')
+                        ui.button('SAVE', on_click=save_current_strategy).props('icon=save color=green')
+                    
+                    with ui.row().classes('w-full items-center gap-4'):
+                        select_saved = ui.select([], label='Saved Strategies').props('dark').classes('flex-grow')
+                        ui.button('LOAD', on_click=load_selected_strategy).props('icon=file_upload color=blue')
+                        ui.button('DELETE', on_click=delete_selected_strategy).props('icon=delete color=red')
+                    
+                    update_strategy_list()
+
+            ui.separator().classes('bg-slate-700')
+            
+            # Row 1: Simulation
+            with ui.row().classes('w-full gap-4 items-start'):
+                with ui.column().classes('flex-grow'):
+                    ui.label('SIMULATION').classes('font-bold text-white mb-2')
+                    
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Universes').classes('text-xs text-slate-400')
+                        lbl_num_sims = ui.label()
+                    slider_num_sims = ui.slider(min=10, max=100, value=20).props('color=cyan')
+                    lbl_num_sims.bind_text_from(slider_num_sims, 'value', lambda v: f'{v}')
+                    lbl_num_sims.set_text('20') 
+                    
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Duration (Years)').classes('text-xs text-slate-400')
+                        lbl_years = ui.label()
+                    slider_years = ui.slider(min=1, max=10, value=10).props('color=blue')
+                    lbl_years.bind_text_from(slider_years, 'value', lambda v: f'{v}')
+                    lbl_years.set_text('10') 
+                    
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Freq (Sess/Yr)').classes('text-xs text-slate-400')
+                        lbl_frequency = ui.label()
+                    slider_frequency = ui.slider(min=9, max=50, value=9).props('color=blue')
+                    lbl_frequency.bind_text_from(slider_frequency, 'value', lambda v: f'{v}')
+                    lbl_frequency.set_text('9') 
+
+                with ui.column().classes('w-1/2'):
+                    ui.label('LADDER PREVIEW').classes('font-bold text-white mb-2')
+                    with ui.expansion('View Table', icon='list').classes('w-full bg-slate-800 text-slate-300'):
+                        ladder_grid = ui.aggrid({
+                            'columnDefs': [
+                                {'headerName': 'Tier', 'field': 'tier', 'width': 70},
+                                {'headerName': 'Bet', 'field': 'bet', 'width': 70},
+                                {'headerName': 'Start GA', 'field': 'start', 'width': 100},
+                            ],
+                            'rowData': [],
+                        }).classes('h-40 w-full theme-balham-dark')
+
+            ui.separator().classes('bg-slate-700')
+
+            # 2. Ecosystem
+            ui.label('ECOSYSTEM').classes('font-bold text-green-400')
+            with ui.row().classes('w-full gap-8'):
+                with ui.column().classes('flex-grow'):
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Contrib (Win)').classes('text-xs text-green-400')
+                        lbl_contrib_win = ui.label()
+                    slider_contrib_win = ui.slider(min=0, max=1000, value=300).props('color=green')
+                    lbl_contrib_win.bind_text_from(slider_contrib_win, 'value', lambda v: f'€{v}')
+                    lbl_contrib_win.set_text('€300')
                 
-                # LIBRARY
-                with ui.expansion('STRATEGY LIBRARY', icon='save').classes('w-full bg-slate-800 text-slate-300 mb-4'):
-                    with ui.column().classes('w-full gap-4'):
-                        with ui.row().classes('w-full items-center gap-4'):
-                            input_name = ui.input('Name').props('dark').classes('flex-grow')
-                            ui.button('SAVE', on_click=save_current_strategy).props('icon=save color=green')
-                        with ui.row().classes('w-full items-center gap-4'):
-                            select_saved = ui.select([], label='Saved').props('dark').classes('flex-grow')
-                            ui.button('LOAD', on_click=load_selected_strategy).props('icon=file_upload color=blue')
-                            ui.button('DEL', on_click=delete_selected_strategy).props('icon=delete color=red')
-                        update_strategy_list()
-
-                ui.separator().classes('bg-slate-700')
-
-                # SIMULATION
-                with ui.row().classes('w-full gap-4 items-start'):
-                    with ui.column().classes('flex-grow'):
-                        ui.label('SIMULATION').classes('font-bold text-white mb-2')
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('Universes').classes('text-xs text-slate-400')
-                            lbl_num_sims = ui.label()
-                        slider_num_sims.bind_value_to(lbl_num_sims, 'text', lambda v: f'{v}')
-                        
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('Years').classes('text-xs text-slate-400')
-                            lbl_years = ui.label()
-                        slider_years.bind_value_to(lbl_years, 'text', lambda v: f'{v}')
-                        
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('Freq').classes('text-xs text-slate-400')
-                            lbl_freq = ui.label()
-                        slider_frequency.bind_value_to(lbl_freq, 'text', lambda v: f'{v}')
-                        
-                        slider_num_sims.move(ui.column().classes('flex-grow'))
-                        slider_years.move(ui.column().classes('flex-grow'))
-                        slider_frequency.move(ui.column().classes('flex-grow'))
-
-                    with ui.column().classes('w-1/2'):
-                        ui.label('LADDER PREVIEW').classes('font-bold text-white mb-2')
-                        with ui.expansion('View', icon='list').classes('w-full bg-slate-800 text-slate-300'):
-                             ladder_grid.move(ui.column())
-
-                ui.separator().classes('bg-slate-700')
-
-                # ECOSYSTEM
-                ui.label('ECOSYSTEM').classes('font-bold text-green-400')
-                with ui.row().classes('w-full gap-8'):
-                    with ui.column().classes('flex-grow'):
-                        with ui.row().classes('w-full justify-between'):
-                             ui.label('Win Contrib').classes('text-xs text-green-400')
-                             lbl_c_win = ui.label()
-                        slider_contrib_win.bind_value_to(lbl_c_win, 'text', lambda v: f'€{v}')
-                    
-                    with ui.column().classes('flex-grow'):
-                         with ui.row().classes('w-full justify-between'):
-                             ui.label('Loss Contrib').classes('text-xs text-orange-400')
-                             lbl_c_loss = ui.label()
-                         slider_contrib_loss.bind_value_to(lbl_c_loss, 'text', lambda v: f'€{v}')
-                    
-                    with ui.column():
-                        switch_luxury_tax.move(ui.column())
-                        switch_holiday.move(ui.column())
-                        with ui.expansion('Tax', icon='tune').classes('bg-slate-800 text-xs w-48'):
-                            with ui.column().classes('p-2'):
-                                ui.label('Threshold')
-                                slider_tax_thresh.move(ui.column())
-                                ui.label('Rate')
-                                slider_tax_rate.move(ui.column())
-
-                ui.separator().classes('bg-slate-700')
-
-                # TACTICS & RISK
-                with ui.grid(columns=2).classes('w-full gap-8'):
-                    with ui.column():
-                        ui.label('TACTICS').classes('font-bold text-purple-400')
-                        
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('Safety').classes('text-xs text-orange-400')
-                            lbl_safe = ui.label()
-                        slider_safety.bind_value_to(lbl_safe, 'text', lambda v: f'{v}x')
-                        
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('Iron Gate').classes('text-xs text-purple-400')
-                            lbl_iron = ui.label()
-                        slider_iron_gate.bind_value_to(lbl_iron, 'text', lambda v: f'{v}')
-                        
-                        select_press.move(ui.column())
-                        
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('Press Depth').classes('text-xs text-red-400')
-                            lbl_depth = ui.label()
-                        slider_press_depth.bind_value_to(lbl_depth, 'text', lambda v: 'Inf' if v==0 else f'{v}')
-
-                    with ui.column():
-                        ui.label('RISK').classes('font-bold text-red-400')
-                        
-                        with ui.row().classes('w-full justify-between'):
-                             ui.label('Stop').classes('text-xs text-red-400')
-                             lbl_stop = ui.label()
-                        slider_stop_loss.bind_value_to(lbl_stop, 'text', lambda v: f'{v}')
-
-                        with ui.row().classes('w-full justify-between'):
-                             ui.label('Target').classes('text-xs text-green-400')
-                             lbl_prof = ui.label()
-                        slider_profit.bind_value_to(lbl_prof, 'text', lambda v: f'{v}')
-
-                        switch_ratchet.move(ui.column())
-                        with ui.row().classes('w-full justify-between'):
-                             ui.label('Ratchet %').classes('text-xs text-yellow-400')
-                             lbl_ratch = ui.label()
-                        slider_ratchet_lock.bind_value_to(lbl_ratch, 'text', lambda v: f'{v}%')
-                        
-                        select_status.move(ui.column())
-                        slider_earn_rate.move(ui.column())
-
-                ui.separator().classes('bg-slate-700')
+                with ui.column().classes('flex-grow'):
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Contrib (Loss)').classes('text-xs text-orange-400')
+                        lbl_contrib_loss = ui.label()
+                    slider_contrib_loss = ui.slider(min=0, max=1000, value=200).props('color=orange')
+                    lbl_contrib_loss.bind_text_from(slider_contrib_loss, 'value', lambda v: f'€{v}')
+                    lbl_contrib_loss.set_text('€200')
                 
-                # RUN
-                with ui.row().classes('w-full items-center justify-between'):
-                    with ui.column():
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('Start Capital').classes('text-xs text-green-400')
-                            lbl_start = ui.label()
-                        slider_start_ga.bind_value_to(lbl_start, 'text', lambda v: f'€{v}')
+                with ui.column():
+                    switch_luxury_tax = ui.switch('Tax').props('color=gold')
+                    switch_luxury_tax.value = True
+                    switch_holiday = ui.switch('Holiday').props('color=blue')
+                    switch_holiday.value = True
+
+            ui.separator().classes('bg-slate-700')
+
+            # 3. Strategy & Risk
+            with ui.grid(columns=2).classes('w-full gap-8'):
+                with ui.column():
+                    ui.label('TACTICS').classes('font-bold text-purple-400')
                     
-                    btn_sim.move(ui.column())
-            
-            label_stats.move(ui.column())
-            progress.move(ui.column())
-            scoreboard_container.move(ui.column())
-            stats_container.move(ui.column())
-            chart_container.move(ui.column())
-            report_container.move(ui.column())
-            
-            # Trigger Manual Layout Build
-            slider_num_sims.move(ui.column()) # Dummy move to ensure render
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Safety Buffer').classes('text-xs text-orange-400')
+                        lbl_safety = ui.label()
+                    slider_safety = ui.slider(min=10, max=60, value=20, on_change=update_ladder_preview).props('color=orange')
+                    lbl_safety.bind_text_from(slider_safety, 'value', lambda v: f'{v}x')
+                    lbl_safety.set_text('20x')
+                    
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Iron Gate Limit').classes('text-xs text-purple-400')
+                        lbl_iron = ui.label()
+                    slider_iron_gate = ui.slider(min=2, max=6, value=3).props('color=purple')
+                    lbl_iron.bind_text_from(slider_iron_gate, 'value', lambda v: f'{v} Losses')
+                    lbl_iron.set_text('3 Losses')
+                    
+                    select_press = ui.select({0: 'Flat', 1: 'Press 1-Win', 2: 'Press 2-Wins'}, value=2, label='Press Logic').classes('w-full')
+                    
+                    # REPLACED: Cap Press Switch -> Press Depth Slider
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Press Depth (0=Inf)').classes('text-xs text-red-400')
+                        lbl_depth = ui.label()
+                    slider_press_depth = ui.slider(min=0, max=5, value=3).props('color=red')
+                    lbl_depth.bind_text_from(slider_press_depth, 'value', lambda v: 'Unlimited' if v==0 else f'{v} Steps')
+                    lbl_depth.set_text('3 Steps')
 
-    except Exception as e:
-        ui.notify(f"Layout Crash: {str(e)}", type='negative', close_button=True)
+                with ui.column():
+                    ui.label('RISK & REWARD').classes('font-bold text-red-400')
+                    
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Stop Loss').classes('text-xs text-red-400')
+                        lbl_stop = ui.label()
+                    slider_stop_loss = ui.slider(min=5, max=30, value=8).props('color=red')
+                    lbl_stop.bind_text_from(slider_stop_loss, 'value', lambda v: f'{v} Units')
+                    lbl_stop.set_text('8 Units')
+                    
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Target').classes('text-xs text-green-400')
+                        lbl_profit = ui.label()
+                    slider_profit = ui.slider(min=3, max=20, value=10).props('color=green')
+                    lbl_profit.bind_text_from(slider_profit, 'value', lambda v: f'{v} Units')
+                    lbl_profit.set_text('10 Units')
+                    
+                    switch_ratchet = ui.switch('Ratchet Mode').props('color=gold')
+                    
+                    ui.label('Status Target').classes('text-xs text-yellow-400 mt-2')
+                    select_status = ui.select(list(SBM_TIERS.keys()), value='Gold').classes('w-full')
+                    
+                    with ui.row().classes('w-full justify-between'):
+                        ui.label('Earn Rate').classes('text-xs text-yellow-400')
+                        lbl_earn = ui.label()
+                    slider_earn_rate = ui.slider(min=1, max=20, value=10).props('color=yellow')
+                    lbl_earn.bind_text_from(slider_earn_rate, 'value', lambda v: f'{v} pts/€100')
+                    lbl_earn.set_text('10 pts/€100')
 
-    update_ladder_preview()
+            ui.separator().classes('bg-slate-700')
+            
+            # Run
+            with ui.row().classes('w-full items-center justify-between'):
+                with ui.column():
+                    select_tier = ui.select({1: 'Start Tier 1', 2: 'Start Tier 2'}, value=1).classes('w-40')
+                    slider_frequency = ui.slider(min=9, max=50, value=9).props('label-always color=blue').classes('w-40 hidden')
+                
+                btn_sim = ui.button('RUN STATUS SIM', on_click=run_sim).props('icon=verified color=yellow text-color=black size=lg')
+        
+        label_stats = ui.label('Ready...').classes('text-sm text-slate-500')
+        progress = ui.linear_progress().props('color=green').classes('mt-0')
+        progress.set_visibility(False)
+
+        # Place Scoreboard at the top of results
+        scoreboard_container = ui.column().classes('w-full mb-4')
+        stats_container = ui.column().classes('w-full')
+        chart_container = ui.card().classes('w-full bg-slate-900 p-4')
+        report_container = ui.column().classes('w-full')
+        
+        update_ladder_preview()
