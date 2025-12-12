@@ -1,94 +1,109 @@
 from dataclasses import dataclass
-from typing import Dict, Optional
 
-@dataclass(frozen=True)
+@dataclass
 class TierConfig:
     level: int
-    min_ga: int
-    max_ga: int
-    base_unit: int
-    press_unit: int
-    stop_loss: int
-    profit_lock: int
-    catastrophic_cap: int
+    min_ga: float
+    max_ga: float
+    base_unit: float
+    press_unit: float
+    stop_loss: float
+    profit_lock: float
+    catastrophic_cap: float
 
-def generate_tier_map(safety_factor: int = 20) -> Dict[int, TierConfig]:
-    """
-    Generates the Tier Ladder based on Risk Tolerance.
-    safety_factor: How many Base Units you need to play this tier.
-    Standard Doctrine = 20. Conservative = 40.
-    """
+# --- BETTING ENGINE MODES ---
+# 1. STANDARD: Safe, Exponential Growth
+# 2. FORTRESS: Aggressive 100 start (2000 threshold)
+# 3. TITAN: High Roller Hysteresis (150/250 push)
+
+def generate_tier_map(safety_factor: int = 25, mode: str = 'Standard') -> dict:
+    tiers = {}
     
-    # Base Units: Tier 1=50, Tier 2=100, Tier 3=150, Tier 4=200, Tier 5=250
-    specs = [
-        (1, 50, 100),
-        (2, 100, 150),
-        (3, 150, 200),
-        (4, 200, 300),
-        (5, 250, 375)
-    ]
-    
-    tier_map = {}
-    
-    for i, (level, base, press) in enumerate(specs):
-        if level == 1:
-            # Floor of 1500 or calculated risk, whichever is higher
-            start_ga = max(1500, base * safety_factor)
-        else:
-            start_ga = base * safety_factor
-            
-        # Stop Loss: ~10 units | Profit: +6 units
-        stop = -(base * 10) 
-        profit = base * 6 
-        
-        # Cap: ~3.5x Stop Loss
-        cat_cap = stop * 3.5
-        
-        # Calculate End GA (Start of next tier - 1)
-        if i < len(specs) - 1:
-            next_base = specs[i+1][1]
-            # Ensure next tier start doesn't overlap weirdly if safety factor is low
-            next_start = next_base * safety_factor
-            end_ga = next_start - 1
-        else:
-            end_ga = 9999999
-            
-        tier_map[level] = TierConfig(
-            level=level,
-            min_ga=int(start_ga),
-            max_ga=int(end_ga),
-            base_unit=base,
-            press_unit=press,
-            stop_loss=stop,
-            profit_lock=profit,
-            catastrophic_cap=int(cat_cap)
+    # --- MODE: TITAN (Updated Hysteresis Logic) ---
+    if mode == 'Titan':
+        # Tier 1: Defense (Below €2,000) -> Bet €50
+        tiers[1] = TierConfig(
+            level=1, min_ga=0, max_ga=2000,
+            base_unit=50.0, press_unit=50.0,
+            stop_loss=-(50.0*10), profit_lock=50.0*6, catastrophic_cap=-(50.0*20)
         )
+        # Tier 2: The Floor (Between €2,000 and €5,000) -> Bet €100 / Press €150
+        tiers[2] = TierConfig(
+            level=2, min_ga=2000, max_ga=float('inf'),
+            base_unit=100.0, press_unit=150.0, # Custom Press
+            stop_loss=-(100.0*10), profit_lock=100.0*6, catastrophic_cap=-(100.0*20)
+        )
+        # Tier 3: The Ceiling (Above €5,000) -> Bet €150 / Press €250
+        tiers[3] = TierConfig(
+            level=3, min_ga=5000, max_ga=float('inf'),
+            base_unit=150.0, press_unit=250.0, # Custom Press
+            stop_loss=-(150.0*10), profit_lock=150.0*6, catastrophic_cap=-(150.0*20)
+        )
+        return tiers
+
+    # --- MODE: FORTRESS (Protected Berserker) ---
+    if mode == 'Fortress':
+        tiers[1] = TierConfig(
+            level=1, min_ga=0, max_ga=2000,
+            base_unit=50.0, press_unit=50.0,
+            stop_loss=-(50.0*10), profit_lock=50.0*6, catastrophic_cap=-(50.0*20)
+        )
+        tiers[2] = TierConfig(
+            level=2, min_ga=2000, max_ga=float('inf'),
+            base_unit=100.0, press_unit=100.0,
+            stop_loss=-(100.0*10), profit_lock=100.0*6, catastrophic_cap=-(100.0*20)
+        )
+        return tiers
+
+    # --- MODE: STANDARD (Exponential) ---
+    BASE_BET_T1 = 50.0
+    multipliers = [1, 2, 4, 10, 20, 40] 
+    for i, mult in enumerate(multipliers):
+        level = i + 1
+        base = BASE_BET_T1 * mult
+        min_ga = base * safety_factor
+        max_ga = (BASE_BET_T1 * multipliers[i+1] * safety_factor) if i < len(multipliers)-1 else float('inf')
         
-    return tier_map
+        tiers[level] = TierConfig(
+            level=level, min_ga=min_ga, max_ga=max_ga,
+            base_unit=base, press_unit=base,
+            stop_loss=-(base*10), profit_lock=base*6, catastrophic_cap=-(base*20)
+        )
+    return tiers
 
-# --- CRITICAL FIX: EXPORT DEFAULT MAP ---
-# This prevents ImportError in other files that expect TIER_MAP to exist.
-TIER_MAP = generate_tier_map(safety_factor=20)
-
-def get_tier_for_ga(ga: float, tier_map: Optional[Dict[int, TierConfig]] = None) -> TierConfig:
+def get_tier_for_ga(current_ga: float, tier_map: dict = None, active_level: int = 1, mode: str = 'Standard') -> TierConfig:
     """
-    Finds the correct tier.
-    If tier_map is None, uses the default TIER_MAP (Standard Doctrine).
+    Selects Tier with Hysteresis (Memory).
     """
     if tier_map is None:
-        tier_map = TIER_MAP
+        tier_map = generate_tier_map()
 
-    for tier_level, config in tier_map.items():
-        if config.min_ga <= ga <= config.max_ga:
-            return config
+    # --- TITAN HYSTERESIS LOGIC (UPDATED) ---
+    if mode == 'Titan':
+        # 1. UPGRADE CHECK
+        if active_level < 3:
+            if current_ga >= 5000: return tier_map[3] # Cross 5k -> Tier 3
+            if current_ga >= 2000: return tier_map[2] # Cross 2k -> Tier 2
+            return tier_map[1] # Else Tier 1
+
+        # 2. DOWNGRADE CHECK (Tightened Safety)
+        if active_level == 3:
+            if current_ga < 4500: return tier_map[2] # Crash 4.5k -> Drop to 2 (Was 3500)
+            return tier_map[3] # Stay at 3 (Buffer Zone)
             
-    # Fallback logic
-    lowest_min = tier_map[1].min_ga
-    if ga < lowest_min:
-        return tier_map[1]
-    return tier_map[5]
+        return tier_map[active_level] # Fallback
 
-def get_churn_bet_size(tier_level: int) -> int:
-    if tier_level <= 2:
-        return 50
-    return 100
+    # --- FORTRESS LOGIC ---
+    if mode == 'Fortress':
+        if current_ga >= 2000: return tier_map[2]
+        return tier_map[1]
+
+    # --- STANDARD LOGIC ---
+    selected_tier = tier_map[min(tier_map.keys())]
+    for level in sorted(tier_map.keys()):
+        t = tier_map[level]
+        if current_ga >= t.min_ga:
+            selected_tier = t
+        else:
+            break
+    return selected_tier
